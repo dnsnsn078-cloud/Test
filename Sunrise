@@ -1,3 +1,4 @@
+repeat task.wait() until game:IsLoaded(); pcall(function() game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("CommF_"):InvokeServer("SetTeam","Pirates") end)
 Config = {
     Team = "Pirates",
     Configuration = {
