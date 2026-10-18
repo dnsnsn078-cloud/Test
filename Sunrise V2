@@ -80,14 +80,48 @@ local function SunriseIndexWorldObject(obj, present)
         end
     end
 end
-workspace.DescendantAdded:Connect(function(obj) SunriseIndexWorldObject(obj, true) end)
-workspace.DescendantRemoving:Connect(function(obj) SunriseIndexWorldObject(obj, false) end)
-task.spawn(function()
+local __SUNRISE_BOOT_ENV = (type(getgenv) == "function" and getgenv()) or _G
+-- Only a Fruit Finder-originated teleport sets this one-shot continuation flag.
+-- A fresh manual/auto-execute launch always starts in Custom mode.
+local __SUNRISE_RESUME_FRUIT_FINDER = __SUNRISE_BOOT_ENV and __SUNRISE_BOOT_ENV.SunriseResumeFruitFinder == true
+if __SUNRISE_BOOT_ENV then __SUNRISE_BOOT_ENV.SunriseResumeFruitFinder = nil end
+local __SUNRISE_CURRENT_JOB = tostring(game.JobId)
+local __SUNRISE_PREVIOUS_MAIN_JOB = __SUNRISE_BOOT_ENV and __SUNRISE_BOOT_ENV.SunriseMainJobId
+local __SUNRISE_CROSS_JOB_RELOAD = __SUNRISE_PREVIOUS_MAIN_JOB ~= nil
+    and tostring(__SUNRISE_PREVIOUS_MAIN_JOB) ~= __SUNRISE_CURRENT_JOB
+-- Keep the duplicate/legacy guard within the same server. After a real teleport,
+-- executor globals may persist, so stale Config/handler tables must not block reload.
+local __SUNRISE_LEGACY_HUB_PRESENT = not (__SUNRISE_CROSS_JOB_RELOAD or __SUNRISE_RESUME_FRUIT_FINDER)
+    and __SUNRISE_BOOT_ENV and type(__SUNRISE_BOOT_ENV.Config) == "table"
+    and type(__SUNRISE_BOOT_ENV.FunctionsHandler) == "table" and __SUNRISE_BOOT_ENV.FunctionsHandler.SunriseRaid ~= nil
+local __SUNRISE_AUTOSC_ALREADY_RUNNING = __SUNRISE_BOOT_ENV and __SUNRISE_BOOT_ENV.YELU0_SECRET_KAITUN_JOB_LOCK == __SUNRISE_CURRENT_JOB
+local __SUNRISE_THIS_BUILD_ALREADY_RUNNING = __SUNRISE_BOOT_ENV and __SUNRISE_BOOT_ENV.SunriseMainJobId == __SUNRISE_CURRENT_JOB
+if __SUNRISE_AUTOSC_ALREADY_RUNNING or __SUNRISE_THIS_BUILD_ALREADY_RUNNING or __SUNRISE_LEGACY_HUB_PRESENT then
+    warn("[Sunrise] An older Sunrise/AutoSC instance is still registered. Fully restart the executor and rejoin before loading this build; rerunning on top of an old instance can cause duplicate loops and stutters.")
+    return
+end
+if __SUNRISE_BOOT_ENV then
+    __SUNRISE_BOOT_ENV.SunriseMainJobId = __SUNRISE_CURRENT_JOB
+    __SUNRISE_BOOT_ENV.SunriseAutoSCInitStatus = "Initializing Sunrise and AutoSC"
+    __SUNRISE_BOOT_ENV.SunriseAutoSCBusy = false
+end
+
+-- Choose Pirates once only if the player has not joined a team. All legacy
+-- startup paths share this one-shot helper to prevent duplicate team requests.
+local __SUNRISE_TEAM_SELECT_ATTEMPTED = false
+local function SunriseSelectPiratesIfUnassigned()
+    local player = game:GetService("Players").LocalPlayer
+    if not player then return false end
+    if player.Team ~= nil then return true end
+    if __SUNRISE_TEAM_SELECT_ATTEMPTED then return false end
     local ok = pcall(function()
-        SunriseWalkDescendantsChunked(workspace, function(obj) SunriseIndexWorldObject(obj, true) end, 350)
+        game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("CommF_"):InvokeServer("SetTeam", "Pirates")
     end)
-    SunriseWorldIndex.Ready = ok
-end)
+    if ok then __SUNRISE_TEAM_SELECT_ATTEMPTED = true end
+    return ok
+end
+SunriseSelectPiratesIfUnassigned()
+
 -- Remove the old bundled Hex/Noguchi overlay even if a prior Sunrise instance is still registered.
 pcall(function()
     local Players = game:GetService("Players")
@@ -115,35 +149,15 @@ pcall(function()
         env.HexUI = nil
     end
 end)
-local __SUNRISE_BOOT_ENV = (type(getgenv) == "function" and getgenv()) or _G
-local __SUNRISE_CURRENT_JOB = tostring(game.JobId)
-local __SUNRISE_LEGACY_HUB_PRESENT = __SUNRISE_BOOT_ENV and type(__SUNRISE_BOOT_ENV.Config) == "table"
-    and type(__SUNRISE_BOOT_ENV.FunctionsHandler) == "table" and __SUNRISE_BOOT_ENV.FunctionsHandler.SunriseRaid ~= nil
-local __SUNRISE_AUTOSC_ALREADY_RUNNING = __SUNRISE_BOOT_ENV and __SUNRISE_BOOT_ENV.YELU0_SECRET_KAITUN_JOB_LOCK == __SUNRISE_CURRENT_JOB
-local __SUNRISE_THIS_BUILD_ALREADY_RUNNING = __SUNRISE_BOOT_ENV and __SUNRISE_BOOT_ENV.SunriseMainJobId == __SUNRISE_CURRENT_JOB
-if __SUNRISE_AUTOSC_ALREADY_RUNNING or __SUNRISE_THIS_BUILD_ALREADY_RUNNING or __SUNRISE_LEGACY_HUB_PRESENT then
-    warn("[Sunrise] An older Sunrise/AutoSC instance is still registered. Fully restart the executor and rejoin before loading this build; rerunning on top of an old instance can cause duplicate loops and stutters.")
-    return
-end
-if __SUNRISE_BOOT_ENV then
-    __SUNRISE_BOOT_ENV.SunriseMainJobId = __SUNRISE_CURRENT_JOB
-    __SUNRISE_BOOT_ENV.SunriseAutoSCInitStatus = "Initializing Sunrise and AutoSC"
-    __SUNRISE_BOOT_ENV.SunriseAutoSCBusy = false
-end
--- Choose Pirates once only if the player has not joined a team. All legacy
--- startup paths share this one-shot helper to prevent duplicate team requests.
-local __SUNRISE_TEAM_SELECT_ATTEMPTED = false
-local function SunriseSelectPiratesIfUnassigned()
-    local player = game:GetService("Players").LocalPlayer
-    if not player then return false end
-    if player.Team ~= nil then return true end
-    if __SUNRISE_TEAM_SELECT_ATTEMPTED then return false end
-    __SUNRISE_TEAM_SELECT_ATTEMPTED = true
-    return pcall(function()
-        game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("CommF_"):InvokeServer("SetTeam", "Pirates")
+
+workspace.DescendantAdded:Connect(function(obj) SunriseIndexWorldObject(obj, true) end)
+workspace.DescendantRemoving:Connect(function(obj) SunriseIndexWorldObject(obj, false) end)
+task.spawn(function()
+    local ok = pcall(function()
+        SunriseWalkDescendantsChunked(workspace, function(obj) SunriseIndexWorldObject(obj, true) end, 350)
     end)
-end
-SunriseSelectPiratesIfUnassigned()
+    SunriseWorldIndex.Ready = ok
+end)
 pcall(function()
     local env = getgenv()
     env.SunriseAutoSCEmbedding = true -- legacy compatibility marker
@@ -167,7 +181,6 @@ Config = {
         SoulGuitar = true,
         RaceV2 = true,
         AutoRaceV3 = true,
-        AutoRandomFruit = false,
         SelectedMelee = "Black Leg",
         SelectedSword = "Shark Saw",
         SelectedBossWeapon = "Rengoku",
@@ -192,7 +205,7 @@ Config = {
         ["Skull Guitar"] = true, -- Preserve the old Soul Guitar default goal using the current name.
     },
     Accessories = {},
-    Goals = {AutoBuyLegendarySwords = false, HopForLegendarySwordDealer = false, AutoDoughKing = false, AutoGhoul = false, AutoDraco = false, AutoDracoStage = 1},
+    Goals = {AutoBuyLegendarySwords = false, HopForLegendarySwordDealer = false, AutoHopLegendarySwords = false, AutoHaki = false, AutoHopHaki = false, AutoRainbowHaki = false, AutoDoughKing = false, AutoGhoul = false, AutoDraco = false, AutoDracoStage = 1},
     BossWeapons = {
         ["Awakened Ice Admiral"] = true,
         ["Tide Keeper"]          = true,
@@ -1008,18 +1021,19 @@ do
     for _, k in ipairs({"AutoHop", "HopWhenIdle", "FpsBoost", "LowGraphics", "blackscreen"}) do Config.Configuration[k] = false end
 
     Config.Mode = "Custom" -- Custom | FruitFinder
-    Config.Farm = {Level = false, Materials = false, Material = "", Mob = false, MobName = "", Boss = false, BossName = "", AcceptQuest = true}
+    Config.Farm = {Level = false, AutoNextSea = false, Materials = false, Material = "", Mob = false, MobName = "", Boss = false, BossName = "", AcceptQuest = true}
     Config.Raid = {Enabled = false, Chip = "Flame", MaxFruitPrice = 1000000, Awaken = true, UseBeli = false}
     Config.Stats = {Enabled = false, Melee = true, Defense = false, Sword = false, Gun = false, ["Demon Fruit"] = false}
     Config.Weapon = "Melee"
-    Config.Rolls = {Bones = false, Fruits = false, Store = true, SpinWait = 16}
-    Config.Extras = {NoAnimation = false, AutoRedeemCodes = false, AutoGachaFruit = false, GachaInterval = 5}
+    Config.Rolls = {Bones = false, Fruits = false, Store = true, SpinWait = 0.5}
+    Config.Extras = {NoAnimation = false, AutoRedeemCodes = false}
     Config.QoL = {AntiAFK = true, FastFlags = false, FPSCap = 0}
-    Config.Finder = {HopDelay = 5, PrevMode = "Custom", MinFruit = "Any", HopMode = "Sea travel"}
+    Config.Finder = {HopDelay = 5, DeadServerDelay = 5, PrevMode = "Custom", MinFruit = "Any", HopMode = "Server list"}
     Config.Webhook = {Url = "", Enabled = false, OnFruit = true}
-    Config.AutoExec = {Url = "", Enabled = false}
+    Config.AutoExec = {Url = "https://raw.githubusercontent.com/dnsnsn078-cloud/Test/refs/heads/main/Sunrise%20V2", Enabled = true}
     Config.UI = {Scale = 0, Accent = 1, AutoSave = true, ClassicOverlay = false}
     Config.HideUINames = {}
+    Config.Misc = {FruitESP = false, HakiDealerESP = false, LegendarySwordDealerESP = false}
     S.Defaults = copy(Config)
 
     S.SettingsPath = S.Dir .. "/Sunrise_" .. tostring(lp.UserId) .. ".json"
@@ -1028,6 +1042,34 @@ do
         if type(saved) == "table" then merge(Config, saved) end
         -- Bone Castle was removed from the public UI; older saves fall back to Custom.
         if Config.Mode == "BoneCastle" then Config.Mode = "Custom" end
+        -- The URL is intentionally fixed here so old settings files cannot silently
+        -- restore a stale raw link. Use the updated URL in one place when publishing.
+        Config.AutoExec = Config.AutoExec or {}
+        Config.AutoExec.Url = "https://raw.githubusercontent.com/dnsnsn078-cloud/Test/refs/heads/main/Sunrise%20V2"
+        Config.AutoExec.Enabled = true -- embedded URL is used by teleport queueing; no separate file is written
+        Config.Rolls = Config.Rolls or {Bones=false, Fruits=false, Store=true, SpinWait=0.5}
+        Config.Rolls.SpinWait = 0.5
+        Config.Items = Config.Items or {}
+        -- Auto Random Fruit is not part of this build; old saved keys are ignored.
+        Config.Extras = Config.Extras or {}
+
+        Config.Misc = Config.Misc or {FruitESP=false, HakiDealerESP=false, LegendarySwordDealerESP=false}
+        Config.Goals = Config.Goals or {}
+        Config.Goals.AutoHopLegendarySwords = Config.Goals.AutoHopLegendarySwords == true
+        Config.Goals.AutoHaki = Config.Goals.AutoHaki == true
+        Config.Goals.AutoHopHaki = Config.Goals.AutoHopHaki == true
+        Config.Goals.AutoRainbowHaki = Config.Goals.AutoRainbowHaki == true
+        Config.Finder = Config.Finder or {HopDelay = 5, DeadServerDelay = 5, PrevMode = "Custom", MinFruit = "Any", HopMode = "Server list"}
+        Config.Finder.HopDelay = math.clamp(tonumber(Config.Finder.HopDelay) or 5, 1, 15)
+        Config.Finder.DeadServerDelay = math.clamp(tonumber(Config.Finder.DeadServerDelay) or 5, 1, 60)
+        -- Never restore the old sea-travel route from an outdated settings file.
+        Config.Finder.HopMode = "Server list"
+        Config.Finder.PrevMode = "Custom"
+        if __SUNRISE_RESUME_FRUIT_FINDER then
+            Config.Mode = "FruitFinder"
+        else
+            Config.Mode = "Custom"
+        end
     end
     Config.SecretQuest = Config.SecretQuest or {Enabled=false, Selected={}, Completed={}}
     Config.SecretQuest.Selected = Config.SecretQuest.Selected or {}
@@ -1083,20 +1125,46 @@ do
     -- standalone AutoSC when the bridge is missing or returns no usable map.
     -- These two functions are intentionally exported at script scope: the UI and
     -- the post-initialization sync loop are declared after this enclosing `do` block.
+    local function sunriseProgressValueIsComplete(value)
+        return value == true or (type(value) == "table" and value.Completed == true)
+    end
+
+    -- Build name lookups once. Every row can then check its status in O(1) time
+    -- instead of repeatedly normalizing and searching the full progress table.
+    local sunriseSecretQuestNameByNormalized = {}
+    for _, quest in ipairs(SUNRISE_SECRET_QUESTS or {}) do
+        sunriseSecretQuestNameByNormalized[secretNormalize(quest.name)] = quest.name
+    end
+    local sunriseSecretAliasByNormalized = {}
+    for oldName, newName in pairs(SUNRISE_SECRET_QUEST_ALIASES or {}) do
+        local oldKey = secretNormalize(oldName)
+        local newKey = secretNormalize(newName)
+        sunriseSecretAliasByNormalized[oldKey] = newName
+        if sunriseSecretQuestNameByNormalized[newKey] then
+            sunriseSecretQuestNameByNormalized[oldKey] = newName
+        end
+    end
+
+    local sunriseSecretProgressByName = {}
+    local sunriseSecretProgressKnownByName = {}
     local sunriseSecretProgressSnapshot = {}
     local sunriseSecretProgressCheckedAt = 0
     local sunriseSecretProgressLastError = nil
     local sunriseSecretProgressLastSuccess = 0
-    local function sunriseProgressValueIsComplete(value)
-        return value == true or (type(value) == "table" and value.Completed == true)
-    end
+    local sunriseSecretProgressLastAttemptAt = 0
+    local sunriseSecretProgressScannedSea = nil
+    local sunriseSecretFallbackCache = {ready = false, checkedAt = 0, byName = {}, byIsland = {}, allStars = false, levelCapDone = false}
+    local sunriseLevelCapCache = {checkedAt = -100, reached = false}
+    local sunriseFinaleCheckAt = 0
+    local sunriseSecretCompletionSavePending = false
+
     function SunriseCanonicalSecretProgressName(rawName)
         local normalized = secretNormalize(rawName)
-        for oldName, newName in pairs(SUNRISE_SECRET_QUEST_ALIASES or {}) do
-            if secretNormalize(oldName) == normalized then return newName end
-        end
-        return tostring(rawName or "")
+        return sunriseSecretAliasByNormalized[normalized]
+            or sunriseSecretQuestNameByNormalized[normalized]
+            or tostring(rawName or "")
     end
+
     local function sunriseProgressHasSea1Keys(progress)
         if type(progress) ~= "table" then return false end
         for key in pairs(progress) do
@@ -1104,22 +1172,204 @@ do
         end
         return false
     end
+
+    local function sunriseIndexSecretProgress(progress)
+        local completedByName, knownByName = {}, {}
+        for key, value in pairs(progress or {}) do
+            local keyText = tostring(key)
+            if keyText:sub(1, 5) == "Sea1/" then
+                local leaf = keyText:match("([^/]+)$") or keyText
+                local normalizedLeaf = secretNormalize(leaf)
+                local canonical = SunriseCanonicalSecretProgressName(leaf)
+                local normalizedCanonical = secretNormalize(canonical)
+                knownByName[normalizedLeaf] = true
+                knownByName[normalizedCanonical] = true
+                if sunriseProgressValueIsComplete(value) then
+                    completedByName[normalizedLeaf] = true
+                    completedByName[normalizedCanonical] = true
+                end
+            end
+        end
+        -- If AutoSC exposes a legacy task name, make that state available through
+        -- both the old and current checklist labels.
+        for aliasKey, canonicalName in pairs(sunriseSecretAliasByNormalized) do
+            local canonicalKey = secretNormalize(canonicalName)
+            if knownByName[canonicalKey] then knownByName[aliasKey] = true end
+            if completedByName[canonicalKey] then completedByName[aliasKey] = true end
+        end
+        return completedByName, knownByName
+    end
+
+    local function sunriseLevelCapReached()
+        local now = os.clock()
+        if now - sunriseLevelCapCache.checkedAt < 20 then return sunriseLevelCapCache.reached end
+        sunriseLevelCapCache.checkedAt = now
+        local reached = false
+        pcall(function()
+            local player = game:GetService("Players").LocalPlayer
+            local data = player and player:FindFirstChild("Data")
+            if data then
+                for _, key in ipairs({"LevelCap", "MaxLevel", "LevelLimit"}) do
+                    local value = data:FindFirstChild(key)
+                    if value and tonumber(value.Value) and tonumber(value.Value) >= 3000 then
+                        reached = true
+                        break
+                    end
+                end
+            end
+        end)
+        sunriseLevelCapCache.reached = reached
+        return reached
+    end
+
+    local function sunriseRefreshSecretFallbackCache(force)
+        local now = os.clock()
+        if not force and sunriseSecretFallbackCache.checkedAt > 0
+            and now - sunriseSecretFallbackCache.checkedAt < 30 then
+            return sunriseSecretFallbackCache
+        end
+
+        local cache = {ready = false, checkedAt = now, byName = {}, byIsland = {}, allStars = false, levelCapDone = sunriseLevelCapReached(), error = nil}
+        local player = game:GetService("Players").LocalPlayer
+        if not player then
+            cache.error = "LocalPlayer is not available"
+            sunriseSecretFallbackCache = cache
+            return cache
+        end
+        -- This fallback is deliberately a single shared scan. It used to run once
+        -- per quest row, producing dozens of full-tree scans every few seconds.
+        local playerScanOk, playerScanError = pcall(function()
+            for _, obj in ipairs(player:GetDescendants()) do
+                local normalized = secretNormalize(obj.Name)
+                local questName = sunriseSecretQuestNameByNormalized[normalized]
+                if questName then
+                    local done = false
+                    if obj:IsA("BoolValue") then
+                        done = obj.Value == true
+                    elseif obj:IsA("StringValue") then
+                        done = tostring(obj.Value):lower():find("complete", 1, true) ~= nil
+                    elseif obj:IsA("IntValue") or obj:IsA("NumberValue") then
+                        done = tonumber(obj.Value) ~= nil and obj.Value > 0
+                    end
+                    if done then cache.byName[secretNormalize(questName)] = true end
+                end
+            end
+        end)
+
+        local islandKeys = {}
+        for _, quest in ipairs(SUNRISE_SECRET_QUESTS or {}) do
+            if quest.island then islandKeys[secretNormalize(quest.island)] = true end
+        end
+        local pg = player and player:FindFirstChildOfClass("PlayerGui")
+        local guiScanOk, guiScanError = true, nil
+        if pg then
+            guiScanOk, guiScanError = pcall(function()
+                for _, obj in ipairs(pg:GetDescendants()) do
+                    if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
+                        local txt = tostring(obj.Text or ""):lower()
+                        local normText = secretNormalize(txt)
+                        if txt:find("40/40", 1, true) or txt:find("39/39", 1, true)
+                            or txt:find("39 stars", 1, true) or txt:find("200 secret levels", 1, true)
+                            or txt:find("level cap: 3000", 1, true) then
+                            cache.allStars = true
+                        end
+                        if txt:find("3/3", 1, true) or txt:find("3 stars", 1, true) or txt:find("★★★", 1, true) then
+                            local chain = normText
+                            local parent = obj.Parent
+                            for _ = 1, 4 do
+                                if not parent then break end
+                                chain = chain .. secretNormalize(parent.Name)
+                                parent = parent.Parent
+                            end
+                            for islandKey in pairs(islandKeys) do
+                                if chain:find(islandKey, 1, true) then cache.byIsland[islandKey] = true end
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+
+        cache.ready = playerScanOk and guiScanOk
+        if not cache.ready then
+            cache.error = tostring(playerScanError or guiScanError or "Fallback scan failed")
+        end
+        if cache.ready and (cache.allStars or cache.levelCapDone) then
+            for _, quest in ipairs(SUNRISE_SECRET_QUESTS or {}) do
+                if cache.levelCapDone or quest.name ~= "The Finale" then
+                    cache.byName[secretNormalize(quest.name)] = true
+                end
+            end
+        end
+        if cache.ready then
+            for islandKey in pairs(cache.byIsland) do
+                for _, quest in ipairs(SUNRISE_SECRET_QUESTS or {}) do
+                if quest.island and secretNormalize(quest.island) == islandKey and quest.name ~= "The Finale" then
+                    cache.byName[secretNormalize(quest.name)] = true
+                end
+                end
+            end
+        end
+        sunriseSecretFallbackCache = cache
+
+        -- Apply every fallback completion in one batch, rather than scheduling a
+        -- settings save separately for each completed row. Failed scans are never authoritative.
+        local changed = false
+        if cache.ready then
+        for _, quest in ipairs(SUNRISE_SECRET_QUESTS or {}) do
+            if cache.byName[secretNormalize(quest.name)] and not (Config.SecretQuest.Completed and Config.SecretQuest.Completed[quest.name] == true) then
+                if SUNRISE_SecretQuestMarkDone then
+                    changed = SUNRISE_SecretQuestMarkDone(quest.name, true) or changed
+                end
+            end
+        end
+        if changed or sunriseSecretCompletionSavePending then
+            pcall(function() S.queueSave() end)
+            sunriseSecretCompletionSavePending = false
+        end
+        end
+        return sunriseSecretFallbackCache
+    end
+
+    local function sunriseSecretProgressSea()
+        local id = game.PlaceId
+        if id == 2753915549 or id == 85211729168715 then return 1 end
+        if id == 4442272183 or id == 79091703265657 then return 2 end
+        if id == 7449423635 or id == 7449925015 or id == 100117331123089 then return 3 end
+        return 0
+    end
+
     function SunriseGetSecretProgressError()
         return sunriseSecretProgressLastError
     end
 
     function SunriseReadSecretProgress(force)
         local now = os.clock()
-        if not force and now - sunriseSecretProgressCheckedAt < 5 then
+        local sea = sunriseSecretProgressSea()
+        -- Once a successful scan has been obtained in Sea 2/3, reuse it for the
+        -- session: those seas do not expose the Sea 1 secret quest set.
+        if sea ~= 1 and sea ~= 0 and sunriseSecretProgressScannedSea == sea
+            and sunriseSecretProgressLastSuccess > 0 then
+            return sunriseSecretProgressSnapshot, sunriseSecretProgressLastError
+        end
+        -- Failed reads remain visible and are retried on a bounded interval rather
+        -- than turning a transient endpoint failure into a definitive incomplete state.
+        if sunriseSecretProgressLastError and now - (sunriseSecretProgressLastAttemptAt or 0) < 15 then
+            return sunriseSecretProgressSnapshot, sunriseSecretProgressLastError
+        end
+        if not force and now - sunriseSecretProgressCheckedAt < 8 then
             return sunriseSecretProgressSnapshot, sunriseSecretProgressLastError
         end
         sunriseSecretProgressCheckedAt = now
+        sunriseSecretProgressLastAttemptAt = now
 
         local env = type(getgenv) == "function" and getgenv() or _G
         local bridge = env and env.SunriseAutoSCBridge
         local progress, readError, okSnapshot
         if bridge and type(bridge.GetProgress) == "function" then
-            local ok, value = pcall(bridge.GetProgress, true)
+            -- Reuse AutoSC's own cached snapshot during normal UI reads. Only a
+            -- manual refresh should force another server request.
+            local ok, value = pcall(bridge.GetProgress, force == true)
             if ok and type(value) == "table" and sunriseProgressHasSea1Keys(value) then
                 progress, okSnapshot = value, true
                 if type(bridge.GetStatus) == "function" then
@@ -1134,8 +1384,8 @@ do
             end
         end
 
-        -- Independent fallback to the original AutoSC endpoint. It runs at most
-        -- once per five-second cache window, not once per quest row.
+        -- Fall back to the original AutoSC endpoint only when its shared bridge
+        -- cannot provide a usable map. Manual refresh bypasses the cache.
         if not okSnapshot then
             local remoteOk, result = pcall(function()
                 local net = game:GetService("ReplicatedStorage").Modules.Net
@@ -1167,15 +1417,21 @@ do
                     merged[key] = sunriseProgressValueIsComplete(value)
                 end
             end
-            -- Keep previously confirmed completions if a later response is partial.
+            -- A partial response must not erase a completion already confirmed once.
             for key, value in pairs(sunriseSecretProgressSnapshot) do
                 if value == true then merged[key] = true end
             end
+            local foundNewCompletion = false
+            for key, value in pairs(merged) do
+                if value == true and sunriseSecretProgressSnapshot[key] ~= true then foundNewCompletion = true; break end
+            end
             sunriseSecretProgressSnapshot = merged
+            sunriseSecretProgressByName, sunriseSecretProgressKnownByName = sunriseIndexSecretProgress(merged)
             sunriseSecretProgressLastError = nil
             sunriseSecretProgressLastSuccess = os.clock()
+            sunriseSecretProgressScannedSea = sea
+            if foundNewCompletion then SunriseSecretProgressRevision = (SunriseSecretProgressRevision or 0) + 1 end
             if env then env.SunriseSecretQuestProgressSnapshot = merged end
-            -- Keep AutoSC's own scheduler and this checklist on the same snapshot.
             if bridge and type(bridge.SetProgressSnapshot) == "function" then
                 pcall(bridge.SetProgressSnapshot, merged)
             end
@@ -1185,19 +1441,42 @@ do
         return sunriseSecretProgressSnapshot, sunriseSecretProgressLastError
     end
 
-    function SUNRISE_SecretQuestMarkDone(name)
-        if not name or name == "" then return end
-        local changed = not (Config.SecretQuest and Config.SecretQuest.Completed and Config.SecretQuest.Completed[name] == true)
+    function SUNRISE_SecretQuestMarkDone(name, deferSave)
+        if not name or name == "" then return false end
+        Config.SecretQuest.Completed = Config.SecretQuest.Completed or {}
+        local changed = Config.SecretQuest.Completed[name] ~= true
         Config.SecretQuest.Completed[name] = true
         S.SecretQuestRuntimeCompleted[name] = true
         secretDetectionCache[name] = true
         secretDetectionAt[name] = os.clock()
-        if changed then pcall(function() S.queueSave() end) end
+        if changed then
+            SunriseSecretProgressRevision = (SunriseSecretProgressRevision or 0) + 1
+            if deferSave then
+                sunriseSecretCompletionSavePending = true
+            else
+                sunriseSecretCompletionSavePending = false
+                pcall(function() S.queueSave() end)
+                -- Chat/log-confirmed regular completions should request one fresh Sea 1 scan.
+                if name ~= "The Finale" and sunriseSecretProgressSea() == 1 then
+                    sunriseSecretProgressCheckedAt = 0
+                    sunriseSecretFallbackCache.ready = false
+                    sunriseSecretFallbackCache.checkedAt = 0
+                    local env = type(getgenv) == "function" and getgenv() or _G
+                    local bridge = env and env.SunriseAutoSCBridge
+                    if bridge and type(bridge.InvalidateProgress) == "function" then pcall(bridge.InvalidateProgress) end
+                end
+            end
+        end
+        return changed
     end
+
     function SUNRISE_SecretQuestIsDone(name)
-        -- A positive completion is permanent for this player's saved checklist.
-        -- The Finale also has a direct server-side completion indicator independent of AutoSC.
-        if secretNormalize(name) == "thefinale" then
+        if not name or name == "" then return false end
+        local target = secretNormalize(name)
+        local now = os.clock()
+
+        -- The Finale has one inexpensive direct completion check.
+        if target == "thefinale" then
             local finalDone = false
             pcall(function()
                 local player = game:GetService("Players").LocalPlayer
@@ -1206,100 +1485,130 @@ do
                 finalDone = (player and player:GetAttribute("CompletedMap") == true)
                     or (level and tonumber(level.Value) and tonumber(level.Value) >= 3000) or false
             end)
-            if finalDone then SUNRISE_SecretQuestMarkDone(name); return true end
+            if finalDone then return SUNRISE_SecretQuestMarkDone(name) or true end
         end
+
         if Config.SecretQuest and Config.SecretQuest.Completed and Config.SecretQuest.Completed[name] == true then return true end
         if S.SecretQuestRuntimeCompleted and S.SecretQuestRuntimeCompleted[name] == true then return true end
 
-        local bridgeEnv = type(getgenv) == "function" and getgenv() or _G
-        local bridge = bridgeEnv and bridgeEnv.SunriseAutoSCBridge
-        local progress = SunriseReadSecretProgress(false)
-        if type(progress) == "table" then
-            local target = secretNormalize(name)
-            local aliases = SUNRISE_SECRET_QUEST_ALIASES or {}
-            for progressKey, value in pairs(progress) do
-                local keyText = tostring(progressKey)
-                if keyText:sub(1, 5) == "Sea1/" then
-                    local leaf = keyText:match("([^/]+)$") or keyText
-                    local canonical = SunriseCanonicalSecretProgressName(leaf)
-                    local completed = sunriseProgressValueIsComplete(value)
-                    if completed and (secretNormalize(leaf) == target or secretNormalize(canonical) == target) then
-                        SUNRISE_SecretQuestMarkDone(name)
-                        return true
-                    end
-                end
-            end
+        SunriseReadSecretProgress(false)
+        if sunriseSecretProgressByName[target] then
+            SUNRISE_SecretQuestMarkDone(name, true)
+            return true
         end
+        if sunriseSecretFallbackCache.ready and sunriseSecretFallbackCache.byName[target] then
+            SUNRISE_SecretQuestMarkDone(name, true)
+            return true
+        end
+
+        -- A level-cap signal is tiny to read and is checked at most every 20s.
+        -- It replaces the old per-row full Data/descendant scan for every quest.
+        if sunriseLevelCapReached() then
+            local changed = false
+            for _, quest in ipairs(SUNRISE_SECRET_QUESTS or {}) do
+                changed = SUNRISE_SecretQuestMarkDone(quest.name, true) or changed
+            end
+            if changed or sunriseSecretCompletionSavePending then
+                pcall(function() S.queueSave() end)
+                sunriseSecretCompletionSavePending = false
+            end
+            return Config.SecretQuest.Completed[name] == true
+        end
+
+        -- Explicit false entries are authoritative for this progress snapshot.
+        -- Do not walk Player/PlayerGui descendants for every known unfinished quest.
+        if sunriseSecretProgressKnownByName[target] and not sunriseSecretProgressLastError then
+            secretDetectionCache[name] = false
+            secretDetectionAt[name] = now
+            return false
+        end
+
+        -- Unknown/legacy names get a single cached fallback check, not one full scan
+        -- per row. The bridge check itself is also throttled by the negative cache.
+        -- The same unavailable quest can be queried dozens of times by separate UI
+        -- rows and automation checks; retry only after the shared fallback cache ages.
+        if secretDetectionCache[name] == false and now - (secretDetectionAt[name] or 0) < 30 then return false end
+        local env = type(getgenv) == "function" and getgenv() or _G
+        local bridge = env and env.SunriseAutoSCBridge
         if bridge and type(bridge.IsDone) == "function" then
             local bridgeOk, actualDone = pcall(bridge.IsDone, name)
             if bridgeOk and actualDone == true then
-                SUNRISE_SecretQuestMarkDone(name)
-                return true
-            end
-            -- A false result is only a miss in the current snapshot; it never clears saved completion.
-        end
-        local now = os.clock()
-        if secretDetectionCache[name] == false and now - (secretDetectionAt[name] or 0) < 5 then return false end
-        -- Some game versions expose per-secret booleans/folders directly to the client.
-        local player = game:GetService("Players").LocalPlayer
-        local target = secretNormalize(name)
-        pcall(function()
-            for _, obj in ipairs(player:GetDescendants()) do
-                if secretNormalize(obj.Name) == target then
-                    if obj:IsA("BoolValue") and obj.Value == true then SUNRISE_SecretQuestMarkDone(name); return true end
-                    if obj:IsA("StringValue") and tostring(obj.Value):lower():find("complete", 1, true) then SUNRISE_SecretQuestMarkDone(name); return true end
-                    if (obj:IsA("IntValue") or obj:IsA("NumberValue")) and obj.Value > 0 then SUNRISE_SecretQuestMarkDone(name); return true end
-                end
-            end
-        end)
-        -- The current UI may show per-island 3/3 stars or the total secret-star count.
-        -- These are live client game-state indicators and also work for pre-completed saves.
-        local quest = nil
-        for _, q in ipairs(SUNRISE_SECRET_QUESTS) do if q.name == name then quest = q; break end end
-        local pg = player:FindFirstChildOfClass("PlayerGui")
-        if pg and quest then
-            local islandKey = secretNormalize(quest.island)
-            local allStars = false
-            pcall(function()
-                for _, obj in ipairs(pg:GetDescendants()) do
-                    if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
-                        local txt = tostring(obj.Text or ""):lower()
-                        local normText = secretNormalize(txt)
-                        if txt:find("40/40", 1, true) or txt:find("39/39", 1, true) or txt:find("39 stars", 1, true)
-                            or txt:find("200 secret levels", 1, true) or txt:find("level cap: 3000", 1, true) then allStars = true end
-                        local chain = normText
-                        local parent = obj.Parent
-                        for _ = 1, 4 do if not parent then break end; chain = chain .. secretNormalize(parent.Name); parent = parent.Parent end
-                        if chain:find(islandKey, 1, true) and (txt:find("3/3", 1, true) or txt:find("3 stars", 1, true) or txt:find("★★★", 1, true)) then
-                            for _, other in ipairs(SUNRISE_SECRET_QUESTS) do if other.island == quest.island and other.name ~= "The Finale" then SUNRISE_SecretQuestMarkDone(other.name) end end
-                            return true
-                        end
-                    end
-                end
-            end)
-            if allStars then
-                for _, q in ipairs(SUNRISE_SECRET_QUESTS) do if q.name ~= "The Finale" then SUNRISE_SecretQuestMarkDone(q.name) end end
+                SUNRISE_SecretQuestMarkDone(name, true)
                 return true
             end
         end
-        -- A 3000 cap is only reachable after the full secret sequence.
-        pcall(function()
-            local data = player:FindFirstChild("Data")
-            if data then
-                for _, key in ipairs({"LevelCap", "MaxLevel", "LevelLimit"}) do
-                    local v = data:FindFirstChild(key)
-                    if v and tonumber(v.Value) and tonumber(v.Value) >= 3000 then
-                        for _, q in ipairs(SUNRISE_SECRET_QUESTS) do SUNRISE_SecretQuestMarkDone(q.name) end
-                        return true
-                    end
-                end
-            end
-        end)
-        local done = Config.SecretQuest.Completed[name] == true or S.SecretQuestRuntimeCompleted[name] == true
-        secretDetectionCache[name] = done
+        local fallback = sunriseRefreshSecretFallbackCache(false)
+        if fallback.ready and fallback.byName[target] then
+            SUNRISE_SecretQuestMarkDone(name, true)
+            return true
+        end
+        if sunriseSecretProgressLastError or not fallback.ready then
+            -- No false result is cached after an unsuccessful read/scan; the next
+            -- eligible retry can resolve it without waiting for the negative-cache TTL.
+            return false
+        end
+        secretDetectionCache[name] = false
         secretDetectionAt[name] = now
-        return done
+        return false
     end
+
+    -- A single scheduled sync resolves all positive progress entries together and
+    -- writes settings once per batch. It never calls IsDone 39 times per cycle.
+    function SunriseSyncSecretProgressCompletions()
+        SunriseReadSecretProgress(false)
+        local changed = false
+        for _, quest in ipairs(SUNRISE_SECRET_QUESTS or {}) do
+            if quest.name ~= "The Finale" and sunriseSecretProgressByName[secretNormalize(quest.name)] then
+                changed = SUNRISE_SecretQuestMarkDone(quest.name, true) or changed
+            end
+        end
+
+        local now = os.clock()
+        if now - sunriseFinaleCheckAt >= 15 then
+            sunriseFinaleCheckAt = now
+            local finalDone = false
+            pcall(function()
+                local player = game:GetService("Players").LocalPlayer
+                local data = player and player:FindFirstChild("Data")
+                local level = data and data:FindFirstChild("Level")
+                finalDone = (player and player:GetAttribute("CompletedMap") == true)
+                    or (level and tonumber(level.Value) and tonumber(level.Value) >= 3000) or false
+            end)
+            if not finalDone then
+                local env = type(getgenv) == "function" and getgenv() or _G
+                local bridge = env and env.SunriseAutoSCBridge
+                if bridge and type(bridge.IsDone) == "function" then
+                    local ok, result = pcall(bridge.IsDone, "The Finale")
+                    finalDone = ok and result == true
+                end
+            end
+            if finalDone then changed = SUNRISE_SecretQuestMarkDone("The Finale", true) or changed end
+        end
+        if changed or sunriseSecretCompletionSavePending then
+            pcall(function() S.queueSave() end)
+            sunriseSecretCompletionSavePending = false
+        end
+        return changed
+    end
+
+    function SunriseHandleSecretProgressChanged()
+        sunriseSecretProgressCheckedAt = 0
+        sunriseSecretFallbackCache.ready = false
+        sunriseSecretFallbackCache.checkedAt = 0
+        for name in pairs(secretDetectionCache) do
+            secretDetectionCache[name] = nil
+            secretDetectionAt[name] = nil
+        end
+        task.defer(function()
+            pcall(SunriseReadSecretProgress, false)
+            pcall(SunriseSyncSecretProgressCompletions)
+        end)
+    end
+    pcall(function()
+        local env = type(getgenv) == "function" and getgenv() or _G
+        if env then env.SunriseOnSecretProgressChanged = SunriseHandleSecretProgressChanged end
+    end)
+
     local function observeSecretCompletion(message)
         local txt = tostring(message or ""):lower()
         if txt == "" then return end
@@ -1335,11 +1644,9 @@ do
     pcall(function()
         game:GetService("Players").LocalPlayer.Chatted:Connect(observeSecretCompletion)
     end)
-    -- the loader can pass its own link: getgenv().SunriseURL = "..." (used to re-run the script after hops)
-    pcall(function()
-        local g = getgenv and getgenv()
-        if g and type(g.SunriseURL) == "string" and g.SunriseURL ~= "" then Config.AutoExec.Url = g.SunriseURL end
-    end)
+    -- Keep the configured raw URL stable across settings/profile restores.
+    -- Teleport loaders in this build use the same explicitly selected URL.
+    Config.AutoExec.Url = "https://raw.githubusercontent.com/dnsnsn078-cloud/Test/refs/heads/main/Sunrise%20V2"
     local saveToken = 0
     function S.save()
         return S.writeJSON(S.SettingsPath, copy(Config))
@@ -1484,25 +1791,51 @@ do
         return ok, #flags
     end
     if Config.QoL.FastFlags then S.applyFastFlags() end
-    function S.loaderString()
+    function S.loaderString(resumeFinder)
         local url = Config.AutoExec.Url
         if type(url) ~= "string" or url == "" then return nil end
-        return 'loadstring(game:HttpGet("' .. url .. '"))()'
-    end
-    function S.writeAutoExec()
-        local src = S.loaderString()
-        if not src or typeof(writefile) ~= "function" then return nil end
-        for _, path in ipairs({"../Autoexecute/Sunrise.lua", "Autoexecute/Sunrise.lua", "autoexec/Sunrise.lua", "../autoexec/Sunrise.lua"}) do
-            local ok = pcall(function() writefile(path, src) end)
-            if ok and pcall(function() return isfile(path) and isfile(path) end) and isfile and isfile(path) then return path end
-        end
-        return nil
+        local urlLiteral = string.format("%q", url)
+        -- Queue-on-teleport loaders carry a one-shot marker; persistent autoexec
+        -- loaders wait briefly so a queued Finder continuation wins the race.
+        local resumeLine = resumeFinder and '    g.SunriseResumeFruitFinder = true\n' or ''
+        local startupDelay = resumeFinder and '' or '    task.wait(2)\n'
+        local alreadyLoadedCheck = resumeFinder and '' or '    if g.SunriseMainJobId == tostring(game.JobId) then return end\n'
+        return 'task.spawn(function()\n'
+            .. '    repeat task.wait(0.5) until game:IsLoaded()\n'
+            .. '    local g = (type(getgenv) == "function" and getgenv()) or _G\n'
+            .. startupDelay
+            .. alreadyLoadedCheck
+            .. resumeLine
+            .. '    g.SunriseURL = ' .. urlLiteral .. '\n'
+            .. '    local ok, err = pcall(function()\n'
+            .. '        local source = game:HttpGet(' .. urlLiteral .. ')\n'
+            .. '        local fn, compileErr = loadstring(source)\n'
+            .. '        if not fn then error(compileErr or "loadstring failed") end\n'
+            .. '        fn()\n'
+            .. '    end)\n'
+            .. '    if not ok then warn("[Sunrise AutoExec] " .. tostring(err)) end\n'
+            .. 'end)'
     end
     function S.queueOnTeleport()
-        local src = S.loaderString()
-        if src and typeof(queue_on_teleport) == "function" then pcall(queue_on_teleport, src) return true end
+        local resumeFinder = Config.Mode == "FruitFinder" and S.Finder and S.Finder.Running == true
+        local src = S.loaderString(resumeFinder)
+        if not src then return false end
+        local env = type(getgenv) == "function" and getgenv() or _G
+        local candidates = {}
+        local function addQueue(fn) if type(fn) == "function" then candidates[#candidates + 1] = fn end end
+        addQueue(env and env.queue_on_teleport)
+        addQueue(queue_on_teleport)
+        addQueue(syn and syn.queue_on_teleport)
+        addQueue(queueonteleport)
+        addQueue(fluxus and fluxus.queue_on_teleport)
+        for _, queueFn in ipairs(candidates) do
+            local ok = pcall(queueFn, src)
+            if ok then return true end
+        end
         return false
     end
+    -- No separate loader file is written. S.queueOnTeleport() embeds the fixed Raw URL
+    -- only for script-initiated hops that need to resume Fruit Finder.
 
     -- ---------- stock (normal + mirage) ----------
     function S.getStock()
@@ -1565,56 +1898,108 @@ do
     S.Finder = {Running = false, Status = "Idle", Server = 0, Skipped = 0}
     local F = S.Finder
     local finderTweenService = game:GetService("TweenService")
+    local SERVER_MEMORY_SECONDS = 40 * 60
     local function visitedList()
-        local v = S.readJSON(S.Dir .. "/visited.json") or {}
+        local v = S.readJSON(S.Dir .. "/visited.json")
+        if type(v) ~= "table" then v = {} end
+        local env = type(getgenv) == "function" and getgenv() or _G
+        local sessionMemory = env and env.SunriseVisitedServers
+        if type(sessionMemory) == "table" then
+            for id, stamp in pairs(sessionMemory) do
+                if v[id] == nil or (tonumber(stamp) or 0) > (tonumber(v[id]) or 0) then v[id] = stamp end
+            end
+        end
         local now, out = os.time(), {}
-        for id, t in pairs(v) do if now - t < 1800 then out[id] = t end end
+        for id, stamp in pairs(v) do
+            local t = tonumber(stamp)
+            if type(id) == "string" and t and now >= t and now - t < SERVER_MEMORY_SECONDS then
+                out[id] = t
+            end
+        end
+        if env then env.SunriseVisitedServers = out end
         return out
+    end
+    local function saveVisitedServers(visited)
+        local env = type(getgenv) == "function" and getgenv() or _G
+        if env then env.SunriseVisitedServers = visited end
+        pcall(function() S.writeJSON(S.Dir .. "/visited.json", visited) end)
     end
     local function serverListHop()
         local TeleportService = game:GetService("TeleportService")
         local visited = visitedList()
-        visited[game.JobId] = os.time()
+        local currentJob = tostring(game.JobId)
+        local now = os.time()
+        visited[currentJob] = now
+        -- Persist the current server immediately, including when no candidate is found.
+        saveVisitedServers(visited)
+
         for attempt = 1, 4 do
-            local cands, cursor = {}, nil
+            local candidates, cursor, seen = {}, nil, {}
             for page = 1, 3 do
                 local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100&excludeFullGames=true"
-                if cursor then url = url .. "&cursor=" .. cursor end
-                local ok, data = pcall(function() return HttpService:JSONDecode(game:HttpGet(url)) end)
-                if not ok or type(data) ~= "table" then task.wait(1.5) break end
-                for _, sv in ipairs(data.data or {}) do
-                    if sv.id ~= game.JobId and not visited[sv.id] and (sv.playing or 0) < (sv.maxPlayers or 12) - 1 then cands[#cands + 1] = sv.id end
+                if cursor then url = url .. "&cursor=" .. HttpService:UrlEncode(cursor) end
+                local ok, data = pcall(function()
+                    return HttpService:JSONDecode(game:HttpGet(url))
+                end)
+                if not ok or type(data) ~= "table" then
+                    task.wait(1.5)
+                    break
+                end
+                for _, server in ipairs(data.data or {}) do
+                    local id = type(server.id) == "string" and server.id or nil
+                    local playing = tonumber(server.playing) or 0
+                    local maxPlayers = tonumber(server.maxPlayers) or 0
+                    if id and id ~= currentJob and not visited[id] and not seen[id]
+                        and maxPlayers > 0 and playing < maxPlayers - 1 then
+                        seen[id] = true
+                        candidates[#candidates + 1] = id
+                    end
                 end
                 cursor = data.nextPageCursor
-                if #cands >= 10 or not cursor then break end
+                if #candidates >= 10 or not cursor then break end
             end
-            if #cands > 0 then
-                local id = cands[math.random(1, #cands)]
-                visited[id] = os.time()
-                S.writeJSON(S.Dir .. "/visited.json", visited)
-                pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, id, lp) end)
-                task.wait(8)
+
+            if #candidates > 0 then
+                -- Randomize the order without choosing a server known to be visited recently.
+                for i = #candidates, 2, -1 do
+                    local j = math.random(1, i)
+                    candidates[i], candidates[j] = candidates[j], candidates[i]
+                end
+                for _, targetJob in ipairs(candidates) do
+                    if Config.Mode == "FruitFinder" and not F.Running then return false end
+                    visited[targetJob] = os.time()
+                    saveVisitedServers(visited)
+                    local ok = pcall(function()
+                        TeleportService:TeleportToPlaceInstance(game.PlaceId, targetJob, lp)
+                    end)
+                    if ok then
+                        F.Status = "Teleporting to a fresh server-list result..."
+                        task.wait(8)
+                        if tostring(game.JobId) ~= currentJob then return true end
+                    end
+                    -- An unsuccessful teleport is remembered so it is not retried repeatedly.
+                    task.wait(0.75)
+                end
             else
-                task.wait(2)
+                task.wait(1.5)
             end
         end
-        pcall(function() TeleportService:Teleport(game.PlaceId, lp) end)
+
+        -- Deliberately do not call TeleportService:Teleport(placeId) here: it can
+        -- return to a recently visited server and bypass the 40-minute memory rule.
+        F.Status = "No fresh server found in the server list; waiting before retry"
+        task.wait(5)
+        return false
     end
     function S.Hop()
-        F.Status = "Hopping server..."
-        S.queueOnTeleport()
-        if Config.Finder.HopMode ~= "Server list" then
-            -- same trick as the working finder: travel to another sea = a fresh server
-            local names = {[1] = "TravelMain", [2] = "TravelDressrosa", [3] = "TravelZou"}
-            local opts = {}
-            for sea, n in pairs(names) do if sea ~= S.curSea() then opts[#opts + 1] = n end end
-            for i = #opts, 2, -1 do local j = math.random(1, i); opts[i], opts[j] = opts[j], opts[i] end
-            for _, n in ipairs(opts) do
-                pcall(function() commf():InvokeServer(n) end)
-                task.wait(6) -- if the teleport started we are gone; otherwise try the next one
-            end
+        F.Status = "Hopping via public server list..."
+        -- This is intentionally server-list-only. Never use sea travel or a random
+        -- Teleport(placeId) fallback, because those bypass the visited-server memory.
+        local queued = S.queueOnTeleport()
+        if Config.Mode == "FruitFinder" and F.Running and not queued then
+            F.Status = "Teleport queue unavailable; retrying server list without auto-resume"
         end
-        serverListHop()
+        return serverListHop()
     end
     function S.findFruits()
         local list = {}
@@ -1724,7 +2109,13 @@ do
                 end
                 if not F.Running then break end
                 if handled == 0 then
-                    F.Status = (F.Skipped > 0 and "Nothing worth taking here" or "No fruit here") .. ", hopping..."
+                    local waitForDead = math.clamp(tonumber(Config.Finder.DeadServerDelay) or 5, 1, 60)
+                    F.Status = (F.Skipped > 0 and "Nothing worth taking here" or "No fruit here")
+                        .. " • treating server as empty in " .. tostring(waitForDead) .. "s"
+                    local deadline = os.clock() + waitForDead
+                    while F.Running and os.clock() < deadline do task.wait(math.min(0.25, deadline - os.clock())) end
+                    if not F.Running then break end
+                    F.Status = "Empty server confirmed; hopping via server list..."
                 else
                     task.wait(1)
                 end
@@ -1776,6 +2167,9 @@ do
         if I.SoulGuitar then o[#o + 1] = "SoulGuitar" end
         if I.RaceV2 then o[#o + 1] = "EvoRace" end
         if I.AutoRaceV3 then o[#o + 1] = "RaceAwakening" end
+        if Config.Goals and Config.Goals.AutoRainbowHaki == true and SeaIndex == 3 then
+            table.insert(o, 1, "RainbowSaviour")
+        end
 
         -- Explicit UI activation priority: the task enabled most recently is checked first.
         -- RefreshTasksData is first-match-wins, so moving the selected handler to index 1
@@ -1794,6 +2188,7 @@ do
             SoulGuitar = Config.Items and Config.Items.SoulGuitar == true,
             EvoRace = Config.Items and Config.Items.RaceV2 == true,
             RaceAwakening = Config.Items and Config.Items.AutoRaceV3 == true,
+            RainbowSaviour = Config.Goals and Config.Goals.AutoRainbowHaki == true and SeaIndex == 3,
             MeleesController = Config.Items and Config.Items.AutoFullyMelees == true,
             SwordBossTask = (any(Config.Sword) or any(Config.Guns) or any(Config.Accessories)
                 or (Config.Items and (Config.Items.Saber or Config.Items.CursedDualKatana))),
@@ -2007,6 +2402,12 @@ do
     bindAccent(winStroke, "Color")
     new("UIGradient", {Rotation = 90, Color = ColorSequence.new(Color3.fromRGB(32, 26, 14), Color3.fromRGB(18, 15, 9))}, win)
     local scale = new("UIScale", {Scale = curScale()}, win)
+    if cam then
+        cam:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+            VP = cam.ViewportSize
+            if (tonumber(Config.UI.Scale) or 0) <= 0 then scale.Scale = curScale() end
+        end)
+    end
 
     local header = new("Frame", {Size = UDim2.new(1, 0, 0, 38), BackgroundTransparency = 1, Active = true}, win)
     local logo = text(header, {Position = UDim2.fromOffset(14, 0), Size = UDim2.new(0, 190, 1, 0), Font = Enum.Font.GothamBold,
@@ -2399,7 +2800,7 @@ do
             setFromX(input.Position.X)
             local mc
             mc = UIS.InputChanged:Connect(function(i)
-                if i == input or i.UserInputType == Enum.UserInputType.MouseMovement then setFromX(i.Position.X) end
+                if i == input or i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch then setFromX(i.Position.X) end
             end)
             input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then mc:Disconnect(); p.ScrollingEnabled = true; queueSave() end
@@ -3784,14 +4185,15 @@ do
             row.Activated:Connect(function() S.SetMode(id) end)
         end
         modeCard("Custom", "Custom", "Enable individual features in Farm, Raid, Goals, and Sea Events.")
-        modeCard("FruitFinder", "Fruit Finder", "Searches other servers for fruit, collects it, attempts to store it, records the result, and continues searching.")
+        modeCard("FruitFinder", "Fruit Finder", "Searches public servers for fruit, collects and stores available fruit when possible, records results, and continues searching.")
     end)
 
     -- FARM
     addTab("Farm", "\240\159\140\190", function(pg)
         hint(pg, "These settings apply in Custom mode. When a target has a quest, Sunrise accepts it when available so eligible kills count toward quest rewards.")
         section(pg, "Level")
-        toggle(pg, "Auto Farm Level", "Accepts the quest for the current level range and farms the matching enemies. Targets update when the level range changes.", function() return Config.Farm.Level end, function(v) Config.Farm.Level = v end, true)
+        toggle(pg, "Auto Farm Level", "Accepts the current level-range quest and farms its enemies. Targets update as you level up.", function() return Config.Farm.Level end, function(v) Config.Farm.Level = v end, true)
+        toggle(pg, "Auto Go to Next Sea", "While Auto Farm Level is enabled, completes the required access steps and travels to the next Sea at level 700 or 1500.", function() return Config.Farm.AutoNextSea == true end, function(v) Config.Farm.AutoNextSea = v end, true)
         section(pg, "Materials")
         toggle(pg, "Auto Farm Materials", "Farms enemies that drop the selected material in the current sea.", function() return Config.Farm.Materials end, function(v) Config.Farm.Materials = v end, true)
         picker(pg, "Material", function()
@@ -3840,7 +4242,7 @@ do
     -- SECRET QUEST TRACKER: AutoSC task toggles can be individually selected and ordered.
     addTab("Secret Quest", "✦", function(pg)
         hint(pg, "Select secret quests in the order they should run. The quest tracker handles travel between steps. With nothing selected, it processes all remaining quests.")
-        toggle(pg, "Auto Secret Quest", "Tracks all 40 First Sea secret quests, including The Finale. It runs only in the First Sea; progress and quest order appear below.", function()
+        toggle(pg, "Auto Secret Quest", "Tracks 39 regular First Sea secret quests; The Finale is shown separately. It runs only in the First Sea; progress and quest order appear below.", function()
             local env = getgenv and getgenv()
             if env and Config.AutoExec and type(Config.AutoExec.Url) == "string" and Config.AutoExec.Url ~= "" then env.SunriseEmbeddedAutoExecUrl = Config.AutoExec.Url end
             local bridge = env and env.SunriseAutoSCBridge
@@ -3879,7 +4281,7 @@ do
         text(progressCard, {Position = UDim2.fromOffset(10, 5), Size = UDim2.new(1, -100, 0, 16),
             Text = "SECRET QUEST PROGRESS", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = T.text})
         local progressCount = text(progressCard, {Position = UDim2.new(1, -84, 0, 5), Size = UDim2.fromOffset(74, 16),
-            Text = "0 / 40", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = accent,
+            Text = "0 / 39 regular", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = accent,
             TextXAlignment = Enum.TextXAlignment.Right})
         local progressTrack = new("Frame", {Position = UDim2.fromOffset(10, 26), Size = UDim2.new(1, -20, 0, 8),
             BackgroundColor3 = T.off, BorderSizePixel = 0, ClipsDescendants = true}, progressCard)
@@ -3889,23 +4291,33 @@ do
         local progressDetail = text(progressCard, {Position = UDim2.fromOffset(10, 39), Size = UDim2.new(1, -20, 0, 17),
             Text = "Completed quests appear here when the quest tracker is ready.", Font = Enum.Font.Gotham, TextSize = 10,
             TextColor3 = T.sub, TextTruncate = Enum.TextTruncate.AtEnd})
-        local function selectedCount()
-            local n, done = #SUNRISE_SECRET_QUESTS, 0
-            for _, q in ipairs(SUNRISE_SECRET_QUESTS) do
-                if SUNRISE_SecretQuestIsDone(q.name) then done = done + 1 end
+        local lastSelectedCountAt, cachedRegularDone, cachedFinaleDone = 0, 0, false
+        local function selectedCount(force)
+            local now = os.clock()
+            if not force and now - lastSelectedCountAt < 2.5 then
+                return 39, cachedRegularDone, cachedFinaleDone
             end
-            return n, done
+            local regularDone, finaleDone = 0, false
+            for _, q in ipairs(SUNRISE_SECRET_QUESTS) do
+                if SUNRISE_SecretQuestIsDone(q.name) then
+                    if q.name == "The Finale" then finaleDone = true else regularDone = regularDone + 1 end
+                end
+            end
+            lastSelectedCountAt, cachedRegularDone, cachedFinaleDone = now, regularDone, finaleDone
+            return 39, regularDone, finaleDone
         end
         local function refreshSecretProgress()
             local env = type(getgenv) == "function" and getgenv() or _G
             local bridge = env and env.SunriseAutoSCBridge
             SunriseReadSecretProgress(false)
-            local localTotal, localDone = selectedCount()
+            local localTotal, localDone, finaleDone = selectedCount()
             local total, done, current, status, manual, selected = localTotal, localDone, "No active secret", "Waiting for AutoSC", false, 0
             if bridge and type(bridge.GetStatus) == "function" then
                 local ok, st = pcall(bridge.GetStatus)
                 if ok and type(st) == "table" then
-                    done = math.max(tonumber(st.done) or 0, localDone)
+                    -- AutoSC's aggregate count includes The Finale; keep the 39 regular
+                    -- secret counter separate and show Finale's completion alongside it.
+                    done = localDone
                     total = localTotal
                     current = tostring(st.current or current)
                     status = tostring(st.status or st.step or status)
@@ -3914,22 +4326,28 @@ do
                 end
             end
             done = math.clamp(tonumber(done) or 0, 0, math.max(1, total))
-            progressCount.Text = tostring(done) .. " / " .. tostring(total)
+            progressCount.Text = tostring(done) .. " / " .. tostring(total) .. " regular"
             progressFill.Size = UDim2.new(done / math.max(1, total), 0, 1, 0)
             local detailError = SunriseGetSecretProgressError and SunriseGetSecretProgressError() or nil
             progressDetail.Text = (manual and (tostring(selected) .. " selected · ") or "All remaining · ")
-                .. current .. " · " .. status .. (detailError and " · progress read failed; retrying" or "")
+                .. current .. " · " .. status .. " · Finale: " .. (finaleDone and "complete" or "not complete")
+                .. (detailError and " · progress read failed; retrying" or "")
             return done, total, current, status
         end
         refreshProgressButton.Activated:Connect(function()
             SunriseReadSecretProgress(true)
+            selectedCount(true)
             pcall(refreshSecretProgress)
             for _, redraw in ipairs(secretQuestRedraws) do pcall(redraw) end
         end)
+        local lastSecretTrackerUiUpdate = 0
         updaters[#updaters + 1] = function()
-            local env = getgenv and getgenv()
+            local now = os.clock()
+            if now - lastSecretTrackerUiUpdate < 2.5 then return end
+            lastSecretTrackerUiUpdate = now
+            local env = type(getgenv) == "function" and getgenv() or _G
             local bridge = env and env.SunriseAutoSCBridge
-            local _, localDone = selectedCount()
+            local _, localDone, localFinaleDone = selectedCount()
             local _, directReadError = SunriseReadSecretProgress(false)
             if bridge and type(bridge.GetStatus) == "function" then
                 local ok, st = pcall(bridge.GetStatus)
@@ -3942,17 +4360,19 @@ do
                     local progressError = tostring(st.progressError or "")
                     if progressError == "" then progressError = tostring(directReadError or "") end
                     local progressNote = progressError ~= "" and " · progress read failed; retrying" or ""
-                    local displayDone = math.max(tonumber(st.done) or 0, localDone)
-                    qStatus.Text = string.format("Secret quests %d/40 · %s · %s · %s", displayDone,
-                        tostring(st.current or "No active secret"), tostring(st.status or st.step or "Ready"), selectionText) .. progressNote
+                    local displayDone = localDone
+                    qStatus.Text = string.format("Regular secrets %d/39 · Finale: %s · %s · %s · %s", displayDone,
+                        localFinaleDone and "complete" or "pending", tostring(st.current or "No active secret"),
+                        tostring(st.status or st.step or "Ready"), selectionText) .. progressNote
                     pcall(refreshSecretProgress)
                     return
                 end
             end
-            local n, done = selectedCount()
+            local n, done, finaleDone = selectedCount()
             local initStatus = env and env.SunriseAutoSCInitStatus or "Quest tracker unavailable"
             local progressNote = directReadError and " · progress read failed; retrying" or ""
-            qStatus.Text = "Quest tracker unavailable · " .. tostring(initStatus) .. " · " .. tostring(done) .. "/" .. tostring(n) .. " detected" .. progressNote
+            qStatus.Text = "Quest tracker unavailable · " .. tostring(initStatus) .. " · regular " .. tostring(done) .. "/" .. tostring(n)
+                .. " · Finale: " .. (finaleDone and "complete" or "pending") .. progressNote
             pcall(refreshSecretProgress)
         end
         local function getOrderIndex(name)
@@ -4065,6 +4485,58 @@ do
         toggle(pg, "Auto Draco", "Completes the Third Sea Dojo belts and later Draco steps. Blue Belt requires a fruit dropped by another player; server hopping is used when none is found. Orange Belt requires a successful trade, and some NPC interactions may need to be completed manually.",
             function() return Config.Goals.AutoDraco == true end,
             function(v) Config.Goals.AutoDraco = v; queueSave() end, true, "Auto Draco")
+        local dracoProgress = info(pg, "Draco progress")
+        button(pg, "Draco Progress", function(b)
+            if SeaIndex ~= 3 then dracoProgress.Text = "Locked • requires Sea 3" else dracoProgress.Text = "Stage " .. tostring(tonumber(Config.Goals.AutoDracoStage) or 1) .. " • Third Sea progression" end
+            b.Text = dracoProgress.Text; task.delay(2, function() b.Text = "Draco Progress" end)
+        end)
+        button(pg, "Draco Requirements", function(b) b.Text = "Requires Sea 3 • Dojo belts • Dragon Wizard steps"; task.delay(3, function() b.Text = "Draco Requirements" end) end)
+        section(pg, "Haki colors", "Aura colors are handled separately from Rainbow Haki. Dealer availability and ownership are checked independently.")
+        toggle(pg, "Auto Haki", "Enables the Haki-color goal controller in the Second Sea. Color purchases remain subject to the game's dealer and currency checks.",
+            function() return Config.Goals.AutoHaki == true and SeaIndex == 2 end,
+            function(v)
+                if SeaIndex ~= 2 then Config.Goals.AutoHaki = false; queueSave(); return end
+                Config.Goals.AutoHaki = v == true
+                if v then Config.Goals.AutoHopHaki = true end
+                queueSave()
+            end, true, "Auto Haki")
+        toggle(pg, "Auto Hop for Haki Dealer", "Searches Second Sea servers for the Aura Color Dealer. Available only in the Second Sea.",
+            function() return Config.Goals.AutoHopHaki == true and SeaIndex == 2 end,
+            function(v) if SeaIndex ~= 2 then Config.Goals.AutoHopHaki = false; return end; Config.Goals.AutoHopHaki = v == true; queueSave() end)
+        local hakiProgress = info(pg, "Haki progress")
+        local function refreshHakiProgress()
+            local dealer = false
+            local npcFolder = workspace:FindFirstChild("NPCs")
+            if npcFolder then
+                for _, obj in ipairs(npcFolder:GetChildren()) do
+                    local n = string.lower(tostring(obj.Name)):gsub("[^%w]", "")
+                    if string.find(n, "barista", 1, true) or string.find(n, "colorsdealer", 1, true) or string.find(n, "auracolor", 1, true) then dealer = true; break end
+                end
+            end
+            local auraOn = false
+            pcall(function() auraOn = lp.Character and lp.Character:FindFirstChild("HasBuso") ~= nil end)
+            hakiProgress.Text = (SeaIndex == 2 and "Sea 2" or (SeaIndex > 2 and "Sea 3+" or "Sea 1")) .. (dealer and " • dealer detected" or " • dealer not detected") .. (auraOn and " • Aura active" or " • Aura inactive")
+        end
+        button(pg, "Haki Progress", function(b) refreshHakiProgress(); b.Text = hakiProgress.Text; task.delay(2, function() b.Text = "Haki Progress" end) end)
+        button(pg, "Haki Requirements", function(b) b.Text = "Requires Sea 2 • Aura Color Dealer • sufficient currency"; task.delay(3, function() b.Text = "Haki Requirements" end) end)
+        section(pg, "Rainbow Haki", "Rainbow Haki is a separate Third Sea progression goal and remains locked until Sea 3.")
+        toggle(pg, "Auto Rainbow Haki", "Enables the Rainbow Haki goal only in the Third Sea.",
+            function() return Config.Goals.AutoRainbowHaki == true and SeaIndex == 3 end,
+            function(v) if SeaIndex ~= 3 then Config.Goals.AutoRainbowHaki = false; return end; Config.Goals.AutoRainbowHaki = v == true; queueSave() end, true, "Rainbow Haki")
+        local rainbowProgress = info(pg, "Rainbow Haki progress")
+        button(pg, "Rainbow Haki Progress", function(b)
+            if SeaIndex ~= 3 then
+                rainbowProgress.Text = "Locked • requires Sea 3"
+            elseif Config.Goals.AutoRainbowHaki then
+                local env = (type(getgenv) == "function" and getgenv()) or _G
+                rainbowProgress.Text = (env and env.SunriseRainbowHakiStatus) or "Enabled • waiting for Horned Man / active boss step"
+            else
+                local env = (type(getgenv) == "function" and getgenv()) or _G
+                rainbowProgress.Text = (env and env.SunriseRainbowHakiStatus) or "Not enabled"
+            end
+            b.Text = rainbowProgress.Text; task.delay(2, function() b.Text = "Rainbow Haki Progress" end)
+        end)
+        button(pg, "Rainbow Haki Requirements", function(b) b.Text = "Requires Sea 3 • Horned Man quest • five boss encounters"; task.delay(3, function() b.Text = "Rainbow Haki Requirements" end) end)
         goalRow(pg, "Saber", function() return CheckItem("Saber") end,
             function() return Config.Items.Saber == true end, function(v) Config.Items.Saber = v end,
             "Puzzle / boss-drop route is enabled")
@@ -4075,8 +4547,6 @@ do
             function() return Config.Items.SoulGuitar == true or Config.Guns["Skull Guitar"] == true end,
             function(v) Config.Items.SoulGuitar = v; Config.Guns["Skull Guitar"] = v end,
             "Formerly Soul Guitar; requires the Haunted Castle puzzle and crafting materials")
-        toggle(pg, "Auto random fruit", "Equips a fruit from storage. This is separate from weapon and accessory goals.",
-            function() return Config.Items.AutoRandomFruit == true end, function(v) Config.Items.AutoRandomFruit = v end)
         -- PART 6: keep race upgrades sequential and make V4's unfinished status explicit.
         section(pg, "Race progression", "Race upgrades must be completed in order. Race V3 requires V2, and Race V4 automation is still in development.")
         local raceProgressHint = hint(pg, "Current race: " .. currentRaceName() .. " • checking server progress…")
@@ -4159,11 +4629,11 @@ do
         local swordAssigned = {}
         for sea = 1, 3 do
             for _, name in ipairs((SunriseSwordSeaGroups and SunriseSwordSeaGroups[sea]) or {}) do
-                if not swordAssigned[name] then table.insert(swordBySea[sea], name); swordAssigned[name] = true end
+                if name ~= "Saishi" and name ~= "Oroshi" and name ~= "Shizu" and not swordAssigned[name] then table.insert(swordBySea[sea], name); swordAssigned[name] = true end
             end
         end
         for _, name in ipairs(SUNRISE_ALL_SWORDS) do
-            if not swordAssigned[name] then
+            if name ~= "Saishi" and name ~= "Oroshi" and name ~= "Shizu" and not swordAssigned[name] then
                 local req = SUNRISE_ITEM_REQUIREMENTS and SUNRISE_ITEM_REQUIREMENTS[name]
                 local sea = math.clamp(tonumber(req and req.seaGroup) or 3, 1, 3)
                 table.insert(swordBySea[sea], name); swordAssigned[name] = true
@@ -4179,12 +4649,6 @@ do
             elseif name == "Cursed Dual Katana" then Config.Items.CursedDualKatana = value
             else Config.Sword[name] = value end
         end
-        toggle(swordPanel, "Auto buy Legendary Swords when available", "Searches for the Legendary Sword Dealer in the Second Sea. Each sword costs 2M Beli and requires the dealer to be available.",
-            function() return Config.Goals.AutoBuyLegendarySwords == true end,
-            function(v) Config.Goals.AutoBuyLegendarySwords = v; queueSave() end)
-        toggle(swordPanel, "Hop for Legendary Sword Dealer", "Continued searching after a server hop requires a valid auto-execute URL and teleport queue support.",
-            function() return Config.Goals.HopForLegendarySwordDealer == true end,
-            function(v) Config.Goals.HopForLegendarySwordDealer = v; queueSave() end)
         picker(swordPanel, "Selected sword", function() return SUNRISE_ALL_SWORDS end, function() return Config.Items.SelectedSword or "Cutlass" end, function(v)
             Config.Items.SelectedSword = v; for _, f in ipairs(redraws) do pcall(f) end
         end)
@@ -4208,6 +4672,45 @@ do
                 goalRow(seaPanel, name, function() return CheckItem(name) end,
                     function() return swordGoalOn(name) end, function(v) setSwordGoal(name, v) end,
                     note, nil, nil, name)
+            end
+            if sea == 2 then
+                section(seaPanel, "Legendary Sword Dealer", "Available only while in the Second Sea.")
+                toggle(seaPanel, "Auto Hop Legendary Swords", "Searches for the Legendary Sword Dealer and works toward all three Legendary Swords. Locked outside the Second Sea.",
+                    function() return Config.Goals.AutoHopLegendarySwords == true and SeaIndex == 2 end,
+                    function(v)
+                        if SeaIndex ~= 2 then Config.Goals.AutoHopLegendarySwords = false; return end
+                        Config.Goals.AutoHopLegendarySwords = v == true
+                        Config.Goals.HopForLegendarySwordDealer = v == true
+                        Config.Goals.AutoBuyLegendarySwords = v == true
+                        for _, n in ipairs({"Saishi", "Oroshi", "Shizu"}) do Config.Sword[n] = v == true end
+                        queueSave()
+                    end)
+                local legendaryProgress = info(seaPanel, "Legendary Sword progress")
+                local function refreshLegendaryProgress()
+                    local count = 0
+                    for _, n in ipairs({"Saishi", "Oroshi", "Shizu"}) do
+                        if CheckItem(n) then count = count + 1 end
+                    end
+                    local dealer = false
+                    local npcFolder = workspace:FindFirstChild("NPCs")
+                    if npcFolder then
+                        for _, obj in ipairs(npcFolder:GetChildren()) do
+                            if string.lower(tostring(obj.Name)):gsub("[^%w]", "") == "legendarysworddealer" then
+                                dealer = true; break
+                            end
+                        end
+                    end
+                    legendaryProgress.Text = tostring(count) .. "/3 owned" .. (dealer and " • dealer detected" or " • dealer not detected")
+                end
+                button(seaPanel, "Legendary Sword Progress", function(b)
+                    refreshLegendaryProgress()
+                    b.Text = legendaryProgress.Text
+                    task.delay(2, function() b.Text = "Legendary Sword Progress" end)
+                end)
+                button(seaPanel, "Legendary Sword Requirements", function(b)
+                    b.Text = "Sea 2 • 2,000,000 Beli per sword • dealer availability"
+                    task.delay(3, function() b.Text = "Legendary Sword Requirements" end)
+                end)
             end
         end
 
@@ -4274,6 +4777,75 @@ do
         end
     end)
 
+    -- Lightweight Misc ESP: event-driven candidates plus shallow periodic reconciliation.
+    do
+        local espObjects = setmetatable({}, {__mode = "k"})
+        local function clearMiscESP(obj)
+            local h = espObjects[obj]
+            if h then pcall(function() h:Destroy() end); espObjects[obj] = nil end
+        end
+        local function isFruitObject(obj)
+            local n = string.lower(tostring(obj and obj.Name or ""))
+            return (obj:IsA("Tool") or obj:IsA("Model") or obj:IsA("BasePart")) and string.find(n, "fruit", 1, true) ~= nil
+        end
+        local function espAdornee(obj)
+            if obj:IsA("Model") then return obj end
+            if obj:IsA("BasePart") then return obj end
+            if obj:IsA("Tool") then return obj:FindFirstChildWhichIsA("BasePart") end
+            return nil
+        end
+        local function setMiscESP(obj, key, enabled, color)
+            local old = espObjects[obj]
+            if not enabled or not obj or not obj.Parent then clearMiscESP(obj); return end
+            local adorn = espAdornee(obj)
+            if not adorn then clearMiscESP(obj); return end
+            if old and old.Parent and old.Adornee == adorn then return end
+            clearMiscESP(obj)
+            local h = Instance.new("Highlight")
+            h.Name = "Sunrise_MiscESP_" .. key
+            h.Adornee = adorn
+            h.FillColor = color
+            h.OutlineColor = color
+            h.FillTransparency = 0.72
+            h.OutlineTransparency = 0.05
+            h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            h.Parent = obj
+            espObjects[obj] = h
+        end
+        workspace.DescendantAdded:Connect(function(obj)
+            if Config.Misc and Config.Misc.FruitESP and isFruitObject(obj) then
+                task.defer(function() if obj.Parent then setMiscESP(obj, "Fruit", true, Color3.fromRGB(255, 210, 80)) end end)
+            end
+        end)
+        task.spawn(function()
+            while task.wait(3) do
+                pcall(function()
+                    local fruits = {}
+                    if Config.Misc and Config.Misc.FruitESP then
+                        for _, obj in ipairs(workspace:GetChildren()) do if isFruitObject(obj) then fruits[obj] = true; setMiscESP(obj, "Fruit", true, Color3.fromRGB(255, 210, 80)) end end
+                        local folder = workspace:FindFirstChild("Fruits")
+                        if folder then for _, obj in ipairs(folder:GetChildren()) do if isFruitObject(obj) then fruits[obj] = true; setMiscESP(obj, "Fruit", true, Color3.fromRGB(255, 210, 80)) end end end
+                    end
+                    local npcs = workspace:FindFirstChild("NPCs")
+                    local found = {}
+                    if npcs then
+                        for _, npc in ipairs(npcs:GetChildren()) do
+                            local normalized = string.lower(tostring(npc.Name)):gsub("[^%w]", "")
+                            local haki = string.find(normalized, "barista", 1, true) or string.find(normalized, "colorsdealer", 1, true) or string.find(normalized, "auracolor", 1, true)
+                            local sword = normalized == "legendarysworddealer"
+                            if haki and Config.Misc and Config.Misc.HakiDealerESP then found[npc] = true; setMiscESP(npc, "HakiDealer", true, Color3.fromRGB(95, 185, 255))
+                            elseif sword and Config.Misc and Config.Misc.LegendarySwordDealerESP then found[npc] = true; setMiscESP(npc, "LegendarySwordDealer", true, Color3.fromRGB(255, 220, 90))
+                            else if espObjects[npc] then clearMiscESP(npc) end end
+                        end
+                    end
+                    for obj, h in pairs(espObjects) do
+                        if not obj.Parent or (isFruitObject(obj) and not (Config.Misc and Config.Misc.FruitESP)) then clearMiscESP(obj) end
+                    end
+                end)
+            end
+        end)
+    end
+
     -- SEA EVENTS + ISLANDS
     addTab("Sea Events", "\\240\\159\\140\\138", function(pg)
         hint(pg, "Detects special islands and sea events. Boat movement and sailing start only when the related options are enabled.")
@@ -4281,7 +4853,6 @@ do
         toggle(pg, "Auto Mirage Island", "Steers the boat toward Mirage Island when it appears.", function() return Config.SeaEvents.AutoMirage end, function(v) Config.SeaEvents.AutoMirage = v end, true)
         toggle(pg, "Auto Prehistoric Island", "Steers the boat toward Prehistoric Island when it appears.", function() return Config.SeaEvents.AutoPrehistoric end, function(v) Config.SeaEvents.AutoPrehistoric = v end, true)
         toggle(pg, "Auto Kitsune Island", "Steers the boat toward Kitsune Island when it appears.", function() return Config.SeaEvents.AutoKitsuneIsland end, function(v) Config.SeaEvents.AutoKitsuneIsland = v end, true)
-        toggle(pg, "Island ESP", "Marks detected special islands on the screen. This is visual only and does not move the character.", function() return Config.SeaEvents.IslandESP end, function(v) Config.SeaEvents.IslandESP = v end)
         local islandStatus = hint(pg, "Mirage: searching • Prehistoric: searching • Kitsune: searching")
         section(pg, "Sea enemy farming")
         toggle(pg, "Auto sea enemy farming", "Enables sea-event farming. Select target enemies below.", function() return Config.SeaEvents.AutoSeaEnemyFarming end, function(v) Config.SeaEvents.AutoSeaEnemyFarming = v end, true)
@@ -4473,47 +5044,49 @@ do
         end
     end)
 
-    -- CONFIG
-    local applyBlack
+    -- CONFIG: player reference only, per the requested layout.
     addTab("Config", "\226\154\153\239\184\143", function(pg)
-        section(pg, "M1 weapon")
-        segment(pg, "Basic attack uses", {"Melee", "Sword", "Gun", "Blox Fruit"}, function() return Config.Weapon end, function(v) Config.Weapon = v; _G.ChooseWP = v end)
-        section(pg, "Auto stats", "Allocates stat points to the selected categories below.")
-        toggle(pg, "Auto stats", "Allocates new stat points to enabled categories.", function() return Config.Stats.Enabled end, function(v) Config.Stats.Enabled = v end)
-        for _, n in ipairs({"Melee", "Defense", "Sword", "Gun", "Demon Fruit"}) do
-            toggle(pg, n, "Allocates each new stat point to " .. n .. " when points are available.", function() return Config.Stats[n] end, function(v) Config.Stats[n] = v end)
+        section(pg, "Player reference")
+        hint(pg, "Player: " .. tostring(lp.Name))
+        hint(pg, "Display name: " .. tostring(lp.DisplayName))
+        hint(pg, "User ID: " .. tostring(lp.UserId))
+        hint(pg, "Place ID: " .. tostring(game.PlaceId))
+        hint(pg, "Current server Job ID: " .. tostring(game.JobId))
+    end)
+
+    -- MISC: passive actions, rerolls and visual indicators.
+    addTab("Misc", "⋯", function(pg)
+        hint(pg, "Optional utilities and visual indicators. Each feature runs only when enabled or when its button is pressed.")
+        section(pg, "Passive actions")
+        toggle(pg, "Roll Fruits", "Uses the Blox Fruit Dealer when the cooldown ends and enough Beli is available.", function() return Config.Rolls.Fruits end, function(v) Config.Rolls.Fruits = v end)
+        toggle(pg, "Roll Bones", "Uses 50 Bones per roll when the Bone Dealer is available in the Third Sea.", function() return Config.Rolls.Bones end, function(v) Config.Rolls.Bones = v end)
+        toggle(pg, "Store Fruits", "Store Fruits", function() return Config.Rolls.Store end, function(v) Config.Rolls.Store = v end)
+        hint(pg, "Roll actions use a fixed 0.5-second wait between attempts. Server cooldowns may still apply.")
+        section(pg, "Reroll options")
+        local function currentFragments()
+            local data = lp:FindFirstChild("Data")
+            local value = data and data:FindFirstChild("Fragments")
+            return value and tonumber(value.Value) or tonumber(ScriptStorage and ScriptStorage.PlayerData and ScriptStorage.PlayerData.Fragments) or 0
         end
-        section(pg, "Combat")
-        toggle(pg, "Auto Ken", "Activates Observation Haki when available.", function() return Config.AutoKen end, function(v) Config.AutoKen = v end)
-        toggle(pg, "Pull mobs + stand still", "Gathers nearby enemies during active farming fights and remains idle while travelling or waiting at an island.", function() return Config.BringMobs end, function(v) Config.BringMobs = v end)
-        toggle(pg, "No animations", "Disables character animations to reduce visual effects and rendering workload.", function() return Config.Extras.NoAnimation end, function(v) Config.Extras.NoAnimation = v end)
-        toggle(pg, "Panic mode", "Moves the character upward when health falls below the selected threshold.", function() return Config.PanicMode.Enabled end, function(v) Config.PanicMode.Enabled = v end)
-        slider(pg, "Flee below health", 5, 50, 5, function() return Config.PanicMode.LowHealthPercent end, function(v) Config.PanicMode.LowHealthPercent = v end, function(v) return v .. " %" end)
-        slider(pg, "Return above health", 50, 100, 5, function() return Config.PanicMode.SafeHealthPercent end, function(v) Config.PanicMode.SafeHealthPercent = v end, function(v) return v .. " %" end)
-        section(pg, "Quality of life")
-        toggle(pg, "Anti AFK", "Sends periodic input while idle to help prevent AFK disconnections.", function() return Config.QoL.AntiAFK end, function(v) Config.QoL.AntiAFK = v end)
-        toggle(pg, "FastFlags", "Applies client-side FastFlags that may improve loading or performance. Results vary by client.", function() return Config.QoL.FastFlags end, function(v)
-            Config.QoL.FastFlags = v
-            if v then local ok, total = S.applyFastFlags(); S.FlagResult = ok .. "/" .. total .. " flags applied" end
+        button(pg, "Reroll Stats — 2,500 Fragments", function(b)
+            local frags = currentFragments()
+            if frags < 2500 then b.Text = "Requires 2,500 Fragments (you have " .. commas(frags) .. ")"; task.delay(2, function() b.Text = "Reroll Stats — 2,500 Fragments" end); return end
+            local ok, result = pcall(function() return Remotes.CommF_:InvokeServer("BlackbeardReward", "Refund", "2") end)
+            b.Text = (ok and result ~= nil and result ~= false) and "Stats reroll requested" or "Stats reroll unavailable"
+            task.delay(2, function() b.Text = "Reroll Stats — 2,500 Fragments" end)
         end)
-        slider(pg, "FPS cap", 0, 240, 30, function() return Config.QoL.FPSCap end, function(v) Config.QoL.FPSCap = v
-            if Config.QoL.FastFlags then S.applyFastFlags() end; pcall(function() if typeof(setfpscap) == "function" then setfpscap(v > 0 and v or 60) end end) end,
-            function(v) return v == 0 and "Default" or tostring(v) end)
-        toggle(pg, "Black screen", "Hides most of the 3D scene to reduce rendering workload and device power use.", function() return Config.Configuration.blackscreen end, function(v) Config.Configuration.blackscreen = v; applyBlack(v) end)
-        toggle(pg, "FPS boost", "Applies client-side visual optimizations to reduce rendering workload.", function() return Config.Configuration.FpsBoost end, function(v) Config.Configuration.FpsBoost = v end)
-        toggle(pg, "Low graphics on rejoin", "Applies low graphics after rejoining. This changes visuals only, not combat behavior.", function() return Config.Configuration.LowGraphics end, function(v) Config.Configuration.LowGraphics = v end)
-        section(pg, "Server")
-        segment(pg, "Team on rejoin", {"Pirates", "Marines"}, function() return Config.Team end, function(v) Config.Team = v end)
-        toggle(pg, "Auto hop", "Searches for another server after the selected delay.", function() return Config.Configuration.AutoHop end, function(v) Config.Configuration.AutoHop = v end)
-        slider(pg, "Hop delay", 10, 240, 10, function() return (Config.Configuration.AutoHopDelay or 3600) / 60 end, function(v) Config.Configuration.AutoHopDelay = v * 60 end,
-            function(v) return v .. " min" end)
-        toggle(pg, "Hop when idle", "Searches for another server after automation has been idle for the selected time.", function() return Config.Configuration.HopWhenIdle end, function(v) Config.Configuration.HopWhenIdle = v end)
-        toggle(pg, "Redeem codes on rejoin", "Attempts to redeem codes known to be active when the script starts after rejoining.", function() return Config.Extras.AutoRedeemCodes end, function(v) Config.Extras.AutoRedeemCodes = v end)
-        section(pg, "Passive (always on)", "Runs selected background tasks such as fruit storage, popup hiding, and notifications.")
-        toggle(pg, "Roll bones", "Spends 50 Bones per roll.", function() return Config.Rolls.Bones end, function(v) Config.Rolls.Bones = v end)
-        toggle(pg, "Roll fruits (Gacha)", "Uses the Blox Fruit Dealer when the cooldown ends and enough Beli is available.", function() return Config.Rolls.Fruits end, function(v) Config.Rolls.Fruits = v end)
-        toggle(pg, "Store fruits", "Makes up to 10 fruit-storage attempts, with a 10-second interval between attempts.", function() return Config.Rolls.Store end, function(v) Config.Rolls.Store = v end)
-        slider(pg, "Wait after each roll", 6, 24, 1, function() return Config.Rolls.SpinWait end, function(v) Config.Rolls.SpinWait = v end, function(v) return v .. " s" end)
+        button(pg, "Reroll Race — 3,000 Fragments", function(b)
+            local frags = currentFragments()
+            if frags < 3000 then b.Text = "Requires 3,000 Fragments (you have " .. commas(frags) .. ")"; task.delay(2, function() b.Text = "Reroll Race — 3,000 Fragments" end); return end
+            local ok, result = pcall(function() return Remotes.CommF_:InvokeServer("BlackbeardReward", "Reroll", "2") end)
+            b.Text = (ok and result ~= nil and result ~= false) and "Race reroll requested" or "Race reroll unavailable"
+            task.delay(2, function() b.Text = "Reroll Race — 3,000 Fragments" end)
+        end)
+        section(pg, "ESP")
+        toggle(pg, "Island ESP", "Highlights detected special islands. This is visual only and does not move the character.", function() return Config.SeaEvents.IslandESP end, function(v) Config.SeaEvents.IslandESP = v end)
+        toggle(pg, "Fruit ESP", "Highlights fruit objects detected in the current server.", function() return Config.Misc.FruitESP == true end, function(v) Config.Misc.FruitESP = v == true end)
+        toggle(pg, "Haki Dealer ESP", "Highlights the Barista / Aura Color Dealer when detected.", function() return Config.Misc.HakiDealerESP == true end, function(v) Config.Misc.HakiDealerESP = v == true end)
+        toggle(pg, "Legendary Sword Dealer ESP", "Highlights the Legendary Sword Dealer when detected.", function() return Config.Misc.LegendarySwordDealerESP == true end, function(v) Config.Misc.LegendarySwordDealerESP = v == true end)
     end)
 
     -- FINDER (also the only tab shown in Fruit Finder mode)
@@ -4524,22 +5097,22 @@ do
         bindAccent(h, "TextColor3")
         local st = text(card, {Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextWrapped = true, Text = "Idle", LayoutOrder = 2, TextYAlignment = Enum.TextYAlignment.Top})
         local last = text(card, {Size = UDim2.new(1, 0, 0, 14), Text = "", TextSize = 11, TextColor3 = T.sub, LayoutOrder = 3})
-        local urlWarn = text(pg, {Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextWrapped = true, TextSize = 10, TextColor3 = T.warn,
-            TextYAlignment = Enum.TextYAlignment.Top, LayoutOrder = nextOrder(),
-            Text = "Set a script URL in Profiles > Auto execute. Without it, the finder stops after the first server hop unless a loader is present in the Autoexecute folder."})
-        updaters[#updaters + 1] = function() urlWarn.Visible = (Config.AutoExec.Url or "") == "" end
+        hint(pg, "Fruit Finder resumes only after a hop it initiates and only when teleport queue support is available.")
         local ctl
         ctl = button(pg, "Start Fruit Finder", function()
             if Config.Mode == "FruitFinder" then S.Finder.Stop() else S.SetMode("FruitFinder") end
         end)
-        slider(pg, "Max time on a fruit before hopping", 1, 15, 1, function() return Config.Finder.HopDelay end, function(v) Config.Finder.HopDelay = v end, function(v) return v .. " s" end)
+        slider(pg, "Max time trying to store a fruit", 1, 15, 1, function() return Config.Finder.HopDelay end, function(v) Config.Finder.HopDelay = v end, function(v) return v .. " s" end)
+        slider(pg, "Delay before treating server as empty", 1, 60, 1, function() return Config.Finder.DeadServerDelay or 5 end,
+            function(v) Config.Finder.DeadServerDelay = math.clamp(tonumber(v) or 5, 1, 60) end, function(v) return v .. " s" end)
+        hint(pg, "Hop method is fixed to public server lists. Server IDs are remembered for at least 40 minutes when file saving is available.")
         picker(pg, "Only take fruits from", function()
             local o = {"Any"}
             for _, f in ipairs(S.FruitList) do o[#o + 1] = f.name end
             return o
         end, function() return Config.Finder.MinFruit end, function(v) Config.Finder.MinFruit = v end)
         hint(pg, "The selected fruit sets the minimum price to keep. Lower-priced fruits are skipped and the server is changed. Fruits with unknown prices are kept.")
-        segment(pg, "Hop method", {"Sea travel", "Server list"}, function() return Config.Finder.HopMode end, function(v) Config.Finder.HopMode = v end)
+        hint(pg, "Server-hop method: Public server list")
         stockCard(pg)
         local listBox = new("Frame", {Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, LayoutOrder = nextOrder()}, pg)
         vlist(listBox, 4)
@@ -4625,24 +5198,9 @@ do
             end
         end
         renderProfiles()
-        section(pg, "Auto execute", "A valid loader URL allows Sunrise to restart after rejoining or changing servers.")
-        field(pg, "Script URL (raw link)", "https://raw.githubusercontent.com/...", function() return Config.AutoExec.Url end, function(v) Config.AutoExec.Url = v end)
-        local res = text(pg, {Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextWrapped = true, TextSize = 10, TextColor3 = T.sub,
-            TextYAlignment = Enum.TextYAlignment.Top, LayoutOrder = nextOrder(), Text = "Server hops can rerun the script through queue_on_teleport. Use the button below to write an auto-execute file."})
-        button(pg, "Write autoexec file now", function()
-            S.save()
-            local p = S.writeAutoExec()
-            res.Text = p and ("Written: " .. p) or "Unable to write to the Autoexecute folder. Add this loader line manually: " .. tostring(S.loaderString() or "(enter the URL first)")
-        end)
         section(pg, "Discord webhook", "Sends notifications only; the webhook cannot send commands to Sunrise.")
         field(pg, "Webhook URL", "https://discord.com/api/webhooks/...", function() return Config.Webhook.Url end, function(v) Config.Webhook.Url = v end)
         toggle(pg, "Send a message for every fruit", "Sends a webhook notification when a fruit is collected. The webhook is one-way and cannot receive commands.", function() return Config.Webhook.Enabled end, function(v) Config.Webhook.Enabled = v end)
-        section(pg, "Roll screens", "Hides the fruit spinner and NPC roll popup. Add other popup names to the list if needed; GuiSpy can help identify them.")
-        field(pg, "Extra screens to hide (comma separated)", "FruitReveal, SomeGui", function() return table.concat(Config.HideUINames or {}, ", ") end, function(v)
-            local t = {}
-            for n in tostring(v):gmatch("[^,]+") do local s = n:match("^%s*(.-)%s*$"); if s ~= "" then t[#t + 1] = s end end
-            Config.HideUINames = t
-        end)
         section(pg, "Panel")
         slider(pg, "Panel size", 0, 2.2, 0.05, function() return Config.UI.Scale end, function(v) Config.UI.Scale = v; scale.Scale = curScale() end,
             function(v) return v == 0 and "Auto" or string.format("%.2fx", v) end)
@@ -4673,6 +5231,7 @@ do
 
     -- black screen (AFK mode)
     local blackGui
+    local applyBlack
     applyBlack = function(on)
         pcall(function()
             if on then
@@ -4755,22 +5314,25 @@ do
     task.spawn(function()
         local lastGoalCompletionRefresh = 0
         local lastSecretQuestRefresh = 0
+        local lastSecretQuestRevision = -1
         while gui.Parent do
             for _, f in ipairs(updaters) do pcall(f) end
             local now = os.clock()
-            if now - lastGoalCompletionRefresh >= 2.0 then
+            if now - lastGoalCompletionRefresh >= 8.0 then
                 lastGoalCompletionRefresh = now
                 for _, f in ipairs(goalCompletionRedraws) do pcall(f) end
             end
-            if now - lastSecretQuestRefresh >= 5.0 then
+            local secretRevision = tonumber(SunriseSecretProgressRevision) or 0
+            if secretRevision ~= lastSecretQuestRevision or now - lastSecretQuestRefresh >= 8.0 then
                 lastSecretQuestRefresh = now
+                lastSecretQuestRevision = secretRevision
                 for _, f in ipairs(secretQuestRedraws) do pcall(f) end
             end
             local fm = Config.Mode == "FruitFinder"
             stateLbl.Text = "Sunrise V2"
             dot.BackgroundColor3 = (_G.Stop and not fm) and T.warn or T.good
             if now - lastStock > 60 then lastStock = now; refreshStock() end
-            task.wait(0.5)
+            task.wait(0.75)
         end
     end)
     task.spawn(function()
@@ -5034,7 +5596,10 @@ do
         local cam = workspace.CurrentCamera
         if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(layoutDebug) end
         task.spawn(function()
-            while debugGui.Parent do pcall(refreshDebug); task.wait(0.4) end
+            while debugGui.Parent do
+                if debugPanel.Visible then pcall(refreshDebug) end
+                task.wait(1.25)
+            end
         end)
     end
 
@@ -5119,7 +5684,7 @@ do
             activeMoveTarget = targetKey
             local distance = (root.Position - targetCF.Position).Magnitude
             if distance <= 25 then activeMove, activeMoveTarget = nil, nil; return end
-            activeMove = TweenService:Create(root, TweenInfo.new(math.clamp(distance / 260, 2, 22), Enum.EasingStyle.Linear), {CFrame = targetCF})
+            activeMove = TweenService:Create(root, TweenInfo.new(math.clamp(distance / 190, 3, 40), Enum.EasingStyle.Linear), {CFrame = targetCF})
             activeMove:Play()
         end
         local function moveBoatSeatTo(seat, targetCF, targetKey)
@@ -5132,7 +5697,7 @@ do
             if distance <= 18 then activeMove, activeMoveTarget = nil, nil; return end
             -- Tween the welded boat assembly root, not just the VehicleSeat; tweening
             -- the seat alone can separate it visually from the hull or fail to move it.
-            activeMove = TweenService:Create(boatRoot, TweenInfo.new(math.clamp(distance / 300, 2, 45), Enum.EasingStyle.Linear), {CFrame = targetCF})
+            activeMove = TweenService:Create(boatRoot, TweenInfo.new(math.clamp(distance / 190, 5, 75), Enum.EasingStyle.Linear), {CFrame = targetCF})
             activeMove:Play()
         end
         local function approach(model, height)
@@ -7126,9 +7691,26 @@ end
     -- SCRIPTSTORAGE MOB REGIONS
     -- ============================================================
     ScriptStorage.MobRegions = {}
-    for W, W in game:GetService("ReplicatedStorage").FortBuilderReplicatedSpawnPositionsFolder:GetChildren() do
-        ScriptStorage.MobRegions[tostring(W)] = ScriptStorage.MobRegions[tostring(W)] or {}
-        table.insert(ScriptStorage.MobRegions[tostring(W)], W.CFrame)
+    local mobSpawnFolder = game:GetService("ReplicatedStorage"):FindFirstChild("FortBuilderReplicatedSpawnPositionsFolder")
+    if mobSpawnFolder then
+        for _, marker in ipairs(mobSpawnFolder:GetChildren()) do
+            local markerName = tostring(marker.Name or marker)
+            local markerCFrame
+            if marker:IsA("BasePart") then
+                markerCFrame = marker.CFrame
+            elseif marker:IsA("Model") then
+                local ok, pivot = pcall(function() return marker:GetPivot() end)
+                if ok then markerCFrame = pivot end
+            elseif marker:IsA("Attachment") then
+                markerCFrame = marker.WorldCFrame
+            end
+            if markerCFrame then
+                ScriptStorage.MobRegions[markerName] = ScriptStorage.MobRegions[markerName] or {}
+                table.insert(ScriptStorage.MobRegions[markerName], markerCFrame)
+            end
+        end
+    else
+        warn("[Sunrise] Spawn-marker folder is not available yet; using built-in quest coordinates where available.")
     end
 
     -- ============================================================
@@ -7629,6 +8211,8 @@ end
         while task.wait(.10) do if _G.FastAttack == os.time() then pcall(function() h:Attack() end) end end
     end)
 function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
+    -- Dedicated entry point for raid islands 1-4; reuses the existing throttled fast-attack worker.
+    Sunrise.RaidKillAuraPulse = function() pcall(function() _G.FastAttack = os.time() end) end
 
     CombatController = {GRAB = false, GRAB_DISTANCE = SeaIndex == 1 and 250 or 350, MAX_ATTACK_DURATION = 2, MAX_ATTACK_DURATION_2 = 60, LEVITATE_TIME = 0, CurrentIndex = 1}
 
@@ -9117,34 +9701,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     -- anything yet still sent a Cousin DLCBoxData remote request every second.
     -- The active Sunrise fruit-store controller below remains responsible for storage.
 
-    -- [ADDED] AUTO RANDOM FRUIT - automatically switches randomly between the DEVIL FRUITS
-    -- owned in the inventory. Uses getInventoryFruits (gets the list of owned
-    -- fruits) + LoadFruit (equip) - both remotes REALLY exist and are
-    -- already used in AutoRaidIce.GetCheapestFruit/BuyChip in this very file,
-    -- not made up. Reads Config.Items.AutoRandomFruit (the file's convention -
-    -- every other feature reads Config.Items.X directly, not through
-    -- _G mirror).
-    task.spawn(function()
-        while task.wait(30) do
-            pcall(function()
-                if not Config.Items.AutoRandomFruit then return end
-                local ok, inventoryFruits = pcall(function()
-                    return Remotes.CommF_:InvokeServer("getInventoryFruits")
-                end)
-                if not ok or type(inventoryFruits) ~= "table" then return end
-                local names = {}
-                for _, fruitData in pairs(inventoryFruits) do
-                    if fruitData and fruitData.Name then
-                        table.insert(names, fruitData.Name)
-                    end
-                end
-                if #names == 0 then return end
-                local picked = names[math.random(1, #names)]
-                table.insert(ScriptStorage.IgnoreStoreFruits, picked)
-                Remotes.CommF_:InvokeServer("LoadFruit", picked)
-            end)
-        end
-    end)
+    -- Auto Random Fruit has been removed completely; fruit storage remains handled by S.StoreFruit.
 
     -- ══════════════════════════════════════════════════════════════════
     -- [REPLACED per promt_fix_kaitun - PATCH #1] CheckDataLevel from message(10)
@@ -9820,9 +10377,10 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         if raceVal ~= "Human" and raceVal ~= "Fishman" and raceVal ~= "Rabbit" then return nil end
         if (ScriptStorage.PlayerData.Level or 0) < 1000 then return nil end
         if (ScriptStorage.PlayerData.Beli or 0) < 2000000 then return nil end
-        local wOk = pcall(function() return Remotes.CommF_:InvokeServer("Wenlocktoad", "3") end)
-        local wResult = wOk and Remotes.CommF_:InvokeServer("Wenlocktoad", "3") or nil
-        if wResult == -2 then return nil end
+        local wOk, wResult = pcall(function()
+            return Remotes.CommF_:InvokeServer("Wenlocktoad", "3")
+        end)
+        if not wOk or wResult == -2 then return nil end
         local tOk, tResult = pcall(function() return Remotes.CommF_:InvokeServer("TalkTrevor", "1") end)
         if not tOk or tResult ~= 0 then return nil end
         return true
@@ -10217,6 +10775,18 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     local LIBRARY_KEY_CF = CFrame.new(6377.12549, 296.634735, -6843.76025)
 
     local lastLegendarySwordDealerTry, lastLegendarySwordDealerHop = 0, 0
+    local lastHakiDealerHop, lastHakiColorTry = 0, 0
+    local function hakiDealerSpawned()
+        local npcFolder = workspace:FindFirstChild("NPCs")
+        if not npcFolder then return false end
+        for _, object in ipairs(npcFolder:GetChildren()) do
+            local normalized = string.lower(tostring(object.Name)):gsub("[^%w]", "")
+            if string.find(normalized, "barista", 1, true) or string.find(normalized, "colorsdealer", 1, true) or string.find(normalized, "auracolor", 1, true) then
+                return true
+            end
+        end
+        return false
+    end
     local function selectedLegendarySwordMissing()
         for _, name in ipairs({"Saishi", "Oroshi", "Shizu"}) do
             if Config.Sword[name] == true and not CheckItem(name) then return true end
@@ -10255,7 +10825,26 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                 end
             end
         end
-        if Config.Goals and Config.Goals.HopForLegendarySwordDealer and Config.Goals.AutoBuyLegendarySwords
+        if Config.Goals and Config.Goals.AutoHaki and SeaIndex == 2 and hakiDealerSpawned()
+            and os.clock() - lastHakiColorTry >= 8 then
+            lastHakiColorTry = os.clock()
+            -- Rate-limited dealer checks/purchases; do not hammer the remote each scheduler tick.
+            pcall(function() Remotes.CommF_:InvokeServer("ColorsDealer", "1") end)
+            pcall(function() Remotes.CommF_:InvokeServer("ColorsDealer", "2") end)
+        end
+        if Config.Goals and (Config.Goals.AutoHopHaki or Config.Goals.AutoHaki) and SeaIndex == 2
+            and not hakiDealerSpawned() and os.clock() - lastHakiDealerHop >= 90 then
+            lastHakiDealerHop = os.clock()
+            local queued = false
+            pcall(function() queued = Sunrise and Sunrise.queueOnTeleport and Sunrise.queueOnTeleport() or false end)
+            if queued then
+                SetTask("MainTask", "Haki Colors | searching for the Aura Color Dealer")
+                task.spawn(function() pcall(function() Sunrise.Hop() end) end)
+            else
+                SetTask("MainTask", "Haki Colors | dealer not found; teleport queue unavailable")
+            end
+        end
+        if Config.Goals and (Config.Goals.AutoHopLegendarySwords or Config.Goals.HopForLegendarySwordDealer) and Config.Goals.AutoBuyLegendarySwords
             and SeaIndex == 2 and selectedLegendarySwordMissing() and not legendarySwordDealerSpawned()
             and os.clock() - lastLegendarySwordDealerHop >= 90 then
             lastLegendarySwordDealerHop = os.clock()
@@ -10265,7 +10854,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                 SetTask("MainTask", "Legendary Sword Dealer | hopping for a server with the dealer")
                 task.spawn(function() pcall(function() Sunrise.Hop() end) end)
             else
-                SetTask("MainTask", "Legendary Sword Dealer | configure AutoExec URL / teleport queue before hopping")
+                SetTask("MainTask", "Legendary Sword Dealer | teleport queue unavailable; automatic hop paused")
             end
         end
         -- If the user explicitly selected a goal handled by this shared controller,
@@ -10841,6 +11430,125 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         local root = enemy and enemy:FindFirstChild("HumanoidRootPart")
         if enemy and hum and root and hum.Health > 0 then return enemy end
         return nil
+    end
+
+    do
+        local rainbowBossOrder = {"Stone", "Hydra Leader", "Kilo Admiral", "Captain Elephant", "Beautiful Pirate"}
+        local rainbowBossSpawn = {
+            ["Stone"] = CFrame.new(-1086, 39, 6768),
+            ["Hydra Leader"] = CFrame.new(5822, 1019, -74),
+            ["Kilo Admiral"] = CFrame.new(2878, 424, -7207),
+            ["Captain Elephant"] = CFrame.new(-13377, 433, -8071),
+            ["Beautiful Pirate"] = CFrame.new(5315, 23, -127),
+        }
+        local hornedManCFrame = CFrame.new(-11892, 930, -8760)
+        local lastHornedManTryAt = 0
+        local lastRainbowEntranceAt = 0
+
+        local function rainbowQuestTitle()
+            local player = LocalPlayer
+            local gui = player and player:FindFirstChildOfClass("PlayerGui")
+            local main = gui and gui:FindFirstChild("Main")
+            local quest = main and main:FindFirstChild("Quest")
+            local container = quest and quest:FindFirstChild("Container")
+            local titleRoot = container and container:FindFirstChild("QuestTitle")
+            local title = titleRoot and titleRoot:FindFirstChild("Title")
+            if quest and quest.Visible == true and title and type(title.Text) == "string" then
+                return title.Text
+            end
+            return ""
+        end
+
+        local function rainbowBossFromTitle(title)
+            local normalized = string.lower(tostring(title or ""))
+            for _, name in ipairs(rainbowBossOrder) do
+                if string.find(normalized, string.lower(name), 1, true) then return name end
+            end
+            return nil
+        end
+
+        local function rainbowStatus(text)
+            local env = (type(getgenv) == "function" and getgenv()) or _G
+            if env then env.SunriseRainbowHakiStatus = tostring(text or "") end
+            SetTask("SubTask", "Rainbow Haki | " .. tostring(text or ""))
+        end
+
+        FunctionsHandler.RainbowSaviour:RegisterMethod("Refresh", function()
+            if not (Config.Goals and Config.Goals.AutoRainbowHaki == true) or SeaIndex ~= 3 then return nil end
+            return true
+        end)
+
+        FunctionsHandler.RainbowSaviour:RegisterMethod("Start", function()
+            if not (Config.Goals and Config.Goals.AutoRainbowHaki == true) or SeaIndex ~= 3 then return end
+            State.Mode = "Rainbow Haki"
+            local title = rainbowQuestTitle()
+            local bossName = rainbowBossFromTitle(title)
+            if bossName then
+                local level = tonumber(ScriptStorage.PlayerData and ScriptStorage.PlayerData.Level) or 0
+                if bossName == "Beautiful Pirate" and level < 1950 then
+                    rainbowStatus("Beautiful Pirate requires level 1950 for normal access; current level " .. tostring(level))
+                    return
+                end
+                local boss = SunriseRaceEnemy(bossName)
+                if boss then
+                    local root = boss:FindFirstChild("HumanoidRootPart")
+                    if root then
+                        rainbowStatus("fighting " .. bossName)
+                        if not (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HasBuso")) then
+                            pcall(function() Remotes.CommF_:InvokeServer("Buso") end)
+                        end
+                        TweenController.Create(root.CFrame + Vector3.new(0, 12, 0))
+                        CombatController.Attack({bossName})
+                    end
+                    return
+                end
+                if bossName == "Hydra Leader" and os.clock() - lastRainbowEntranceAt >= 12 then
+                    local root = SunriseRaceRoot()
+                    if root and (root.Position - rainbowBossSpawn[bossName].Position).Magnitude > 1600 then
+                        lastRainbowEntranceAt = os.clock()
+                        pcall(function() Remotes.CommF_:InvokeServer("requestEntrance", Vector3.new(5643.45, 1013.09, -340.51)) end)
+                        return
+                    end
+                end
+                local regions = ScriptStorage.MobRegions and ScriptStorage.MobRegions[bossName]
+                local point = type(regions) == "table" and regions[1] or nil
+                local target = typeof(point) == "Vector3" and CFrame.new(point) or rainbowBossSpawn[bossName]
+                rainbowStatus("waiting for " .. bossName .. " to spawn")
+                if target and CaculateDistance(target) > 35 then TweenController.Create(target + Vector3.new(0, 35, 0)) end
+                return
+            end
+
+            -- Horned Man progress is persistent on the game's side. When no step is
+            -- active in the quest tracker, return to him and reactivate the saved step.
+            if CaculateDistance(hornedManCFrame) > 22 then
+                rainbowStatus("travelling to Horned Man to start/reactivate the saved step")
+                TweenController.Create(hornedManCFrame)
+                return
+            end
+            if os.clock() - lastHornedManTryAt < 8 then return end
+            lastHornedManTryAt = os.clock()
+            local ok, result = pcall(function() return Remotes.CommF_:InvokeServer("HornedMan", "Bet") end)
+            if not ok then
+                rainbowStatus("Horned Man request failed; retrying with backoff")
+                lastHornedManTryAt = os.clock() + 8
+                return
+            end
+            local response = type(result) == "string" and string.lower(result) or ""
+            local confirmedComplete = string.find(response, "already completed", 1, true)
+                or string.find(response, "already unlocked", 1, true)
+                or string.find(response, "you have unlocked", 1, true)
+                or string.find(response, "quest completed", 1, true)
+                or string.find(response, "quest complete", 1, true)
+            if confirmedComplete then
+                Config.Goals.AutoRainbowHaki = false
+                pcall(function() if Sunrise and Sunrise.queueSave then Sunrise.queueSave() end end)
+                rainbowStatus("server response indicates the Rainbow Haki reward is already unlocked")
+            elseif result == false then
+                rainbowStatus("Horned Man did not activate a step; check the NPC dialogue and quest tracker")
+            else
+                rainbowStatus("checking/reactivating saved step; waiting for the active boss to appear in the quest tracker")
+            end
+        end)
     end
 
     local sunriseGhoulInventoryAt = 0
@@ -12511,25 +13219,97 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         end
         local function press(obj)
             if not obj then return false end
-            local pp = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
-            if pp and typeof(fireproximityprompt) == "function" then
+            local pp = obj:IsA("ProximityPrompt") and obj or obj:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if pp and type(fireproximityprompt) == "function" then
                 local ok = pcall(fireproximityprompt, pp)
                 if ok then return true end
             end
-            local cd = obj:FindFirstChildWhichIsA("ClickDetector", true)
-            if cd and typeof(fireclickdetector) == "function" then
+            local cd = obj:IsA("ClickDetector") and obj or obj:FindFirstChildWhichIsA("ClickDetector", true)
+            if cd and type(fireclickdetector) == "function" then
                 local ok = pcall(fireclickdetector, cd)
                 if ok then return true end
             end
             return false
         end
         local function summonButton()
-            local m = workspace:FindFirstChild("Map")
-            if not m then return nil end
-            local isl = (SeaIndex == 3) and m:FindFirstChild("Boat Castle") or m:FindFirstChild("CircleIsland")
-            local rs = isl and isl:FindFirstChild("RaidSummon2")
-            local btn = rs and rs:FindFirstChild("Button")
-            return btn and btn:FindFirstChild("Main")
+            local map = workspace:FindFirstChild("Map")
+            if not map then return nil end
+
+            local islandNames = (SeaIndex == 3)
+                and {"Boat Castle", "CircleIsland"}
+                or {"CircleIsland", "Boat Castle"}
+
+            local function hasActivator(node)
+                return node and (
+                    node:IsA("ProximityPrompt")
+                    or node:IsA("ClickDetector")
+                    or node:FindFirstChildWhichIsA("ProximityPrompt", true)
+                    or node:FindFirstChildWhichIsA("ClickDetector", true)
+                )
+            end
+
+            local function targetPart(node)
+                if not node then return nil end
+                if node:IsA("BasePart") then return node end
+                if node:IsA("ProximityPrompt") or node:IsA("ClickDetector") then
+                    local parent = node.Parent
+                    if parent and parent:IsA("BasePart") then return parent end
+                end
+                if node:IsA("Model") and node.PrimaryPart then return node.PrimaryPart end
+                return node:FindFirstChildWhichIsA("BasePart", true)
+            end
+
+            local function findInSummonRoot(root)
+                if not root then return nil end
+                for _, name in ipairs({"Main", "Button", "RaidSummon2"}) do
+                    local candidate = root.Name == name and root or root:FindFirstChild(name, true)
+                    if hasActivator(candidate) then
+                        local part = targetPart(candidate)
+                        if part then return part end
+                    end
+                end
+                for _, node in ipairs(root:GetDescendants()) do
+                    if node:IsA("ProximityPrompt") or node:IsA("ClickDetector") then
+                        local part = targetPart(node)
+                        if part then return part end
+                    end
+                end
+                if hasActivator(root) then return targetPart(root) end
+                return nil
+            end
+
+            for _, islandName in ipairs(islandNames) do
+                local island = map:FindFirstChild(islandName, true)
+                if island then
+                    local summon = island:FindFirstChild("RaidSummon2", true)
+                    local part = findInSummonRoot(summon)
+                    if part then return part end
+                end
+            end
+
+            -- The exact named model is stable across most game revisions.
+            local summon = map:FindFirstChild("RaidSummon2", true)
+            local part = findInSummonRoot(summon)
+            if part then return part end
+
+            -- Last fallback: identify a clickable/prompt target by its ancestor path.
+            -- Keep this search inside Map to avoid accidentally selecting other UI or NPCs.
+            for _, node in ipairs(map:GetDescendants()) do
+                if node:IsA("ProximityPrompt") or node:IsA("ClickDetector") then
+                    local names, ancestor = {}, node
+                    for _ = 1, 7 do
+                        if not ancestor or ancestor == map then break end
+                        names[#names + 1] = tostring(ancestor.Name):lower()
+                        ancestor = ancestor.Parent
+                    end
+                    local path = table.concat(names, "/")
+                    if path:find("raid", 1, true) and path:find("summon", 1, true) then
+                        local target = targetPart(node)
+                        if target then return target end
+                    end
+                end
+            end
+            return nil
         end
         local function eligibleFruits()
             -- Classic brute-force loop: use the live GetFruits catalog and let
@@ -12639,7 +13419,12 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             if target then
                 waitForIslandUntil = 0
                 SetTask('MainTask', 'Raid | Island ' .. currentIndex .. '/5 | Fighting ' .. target.Name)
-                CombatController.Attack(target.Name)
+                if currentIndex <= 4 and targetDistance <= 65 and Sunrise.RaidKillAuraPulse then
+                    -- Islands 1-4 use the existing local kill-aura worker; Island 5 stays on normal melee.
+                    Sunrise.RaidKillAuraPulse()
+                else
+                    CombatController.Attack(target.Name)
+                end
                 return
             end
 
@@ -12696,106 +13481,12 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             task.wait(0.5)
         end
         FunctionsHandler.SunriseRaid:Register()
-        -- ============================================================
-    -- ISLAND SECRET QUEST ROUTER (Update 30)
-    -- Routes to the selected/next incomplete secret, opens available Rumor dialogue,
-    -- and lets the completion tracker advance from live game messages/state.
-    -- Puzzle-specific minigames are deliberately not brute-forced with guessed inputs.
-    -- ============================================================
-    local SecretQuestIslandCFrames = {
-        ["Middle Town"] = CFrame.new(-690, 15, 1582), ["Jungle"] = CFrame.new(-1598, 35, 153),
-        ["Pirate Village"] = CFrame.new(-1141, 4, 3831), ["Desert"] = CFrame.new(894, 5, 4392),
-        ["Frozen Village"] = CFrame.new(1389, 88, -1298), ["Marine Fortress"] = CFrame.new(-5039, 27, 4324),
-        ["Lower Skylands"] = CFrame.new(-4839, 716, -2619), ["Prison"] = CFrame.new(5308, 1, 475),
-        ["Colosseum"] = CFrame.new(-1580, 6, -2986), ["Magma Village"] = CFrame.new(-5313, 10, 8515),
-        ["Underwater City"] = CFrame.new(61122, 18, 1569), ["Upper Skylands"] = CFrame.new(-7906, 5634, -1411),
-        ["Fountain City"] = CFrame.new(5259, 37, 4050),
-    }
-    local allNonFinalDoneCache, allNonFinalDoneAt = false, 0
-    local function allNonFinalSecretsDone()
-        if os.clock() - allNonFinalDoneAt < 5 then return allNonFinalDoneCache end
-        local done = true
-        for _, q in ipairs(SUNRISE_SECRET_QUESTS) do
-            if q.name ~= "The Finale" and not SUNRISE_SecretQuestIsDone(q.name) then done = false; break end
-        end
-        allNonFinalDoneCache, allNonFinalDoneAt = done, os.clock()
-        return done
-    end
-    local function currentSecretTarget()
-        local allMode = Config.SecretQuest and Config.SecretQuest.Enabled
-        for _, q in ipairs(SUNRISE_SECRET_QUESTS) do
-            local chosen = allMode or (Config.SecretQuest and Config.SecretQuest.Selected[q.name] == true)
-            local finalAllowed = q.name ~= "The Finale" or allNonFinalSecretsDone()
-            if chosen and finalAllowed and not SUNRISE_SecretQuestIsDone(q.name) then return q end
-        end
-        return nil
-    end
+        -- AutoSC is the sole secret-quest executor. Keep this compatibility handler
+    -- inert; the previous experimental router returned immediately and only consumed
+    -- locals, pushing hoangtuveu() over Luau's 200-local limit.
     FunctionsHandler.SunriseSecretQuest:Register()
-    FunctionsHandler.SunriseSecretQuest:RegisterMethod("Refresh", function()
-        return nil -- AutoSC is the only secret-quest scheduler in v1.09.
-    end)
-    FunctionsHandler.SunriseSecretQuest:RegisterMethod("Start", function(q)
-        if true then return end -- AutoSC is the only secret-quest executor; never run the experimental router in parallel.
-        if not q or SeaIndex ~= 1 then return end
-        local target = SecretQuestIslandCFrames[q.island]
-        if not target then return end
-        SetTask("MainTask", "Auto Secret Quest | " .. q.name)
-        SetTask("SubTask", "Routing to " .. q.island .. " · " .. q.name)
-        local char = LocalPlayer.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-        if (root.Position - target.Position).Magnitude > 55 then
-            TweenController.Create(target)
-            return
-        end
-        -- If a Rumor option is already on screen, select it. This never guesses puzzle answers.
-        local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-        if pg then
-            for _, obj in ipairs(pg:GetDescendants()) do
-                if obj:IsA("TextButton") and obj.Visible then
-                    local tx = tostring(obj.Text or ""):lower()
-                    if tx == "rumor" or tx == "rumour" or tx:find("rumor", 1, true) or tx:find("rumour", 1, true) then
-                        pcall(function() obj:Activate() end)
-                        SetTask("SubTask", "Opened Rumor for " .. q.island .. "; follow the revealed clue if it requires a puzzle")
-                        task.wait(0.5)
-                        return
-                    end
-                end
-            end
-        end
-        -- Trigger only nearby prompts that clearly advertise a talk/interact action.
-        local best, bestDist = nil, 22
-        pcall(function()
-            for _, obj in ipairs(workspace:GetDescendants()) do
-                if obj:IsA("ProximityPrompt") and obj.Enabled then
-                    local par = obj.Parent
-                    local part = par and (par:IsA("BasePart") and par or par:FindFirstChildWhichIsA("BasePart", true))
-                    if part then
-                        local d = (part.Position - root.Position).Magnitude
-                        local action = (tostring(obj.ActionText) .. " " .. tostring(obj.ObjectText) .. " " .. tostring(obj.Name)):lower()
-                        if d < bestDist and (action:find("talk", 1, true) or action:find("rumor", 1, true) or action:find("rumour", 1, true) or action:find("interact", 1, true)) then
-                            best, bestDist = obj, d
-                        end
-                    end
-                end
-            end
-        end)
-        if best and typeof(fireproximityprompt) == "function" then pcall(fireproximityprompt, best) end
-        -- Awakening quests: fight the matching boss if it has spawned; the puzzle gate itself remains game-driven.
-        local bossName = q.name:match("^Awakened (.+)$")
-        if bossName then
-            local aliases = { ["Gorilla King"]="The Gorilla King", ["Chef"]="Chef", ["Vice Admiral"]="Vice Admiral", ["Magma General"]="Magma General", ["Fishman Lord"]="Fishman Lord", ["Sky Warlord"]="Sky Warlord", ["Lightning God"]="Lightning God", ["Yeti"]="Yeti", ["Warden"]="Warden", ["Cyborg"]="Cyborg" }
-            local names = {aliases[bossName] or bossName, bossName, q.name}
-            for _, n in ipairs(names) do
-                local enemy = ScriptStorage.Enemies[n] or (workspace:FindFirstChild("Enemies") and workspace.Enemies:FindFirstChild(n))
-                if enemy and enemy:FindFirstChildOfClass("Humanoid") and enemy:FindFirstChildOfClass("Humanoid").Health > 0 then
-                    CombatController.Attack(tostring(enemy))
-                    SetTask("SubTask", "Attacking " .. n .. " if its secret-boss puzzle is active")
-                    return
-                end
-            end
-        end
-    end)
+    FunctionsHandler.SunriseSecretQuest:RegisterMethod("Refresh", function() return nil end)
+    FunctionsHandler.SunriseSecretQuest:RegisterMethod("Start", function() return end)
 
     FunctionsHandler.SunriseRaid:RegisterMethod("Refresh", function()
             if not Config.Raid.Enabled or (SeaIndex or 1) < 2 then return false end
@@ -13000,34 +13691,44 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                 end)
             end
         end)
-        local rolling, suppressUntil, snap = false, 0, {}
+        W.Rolling, W.SuppressUntil, W.RollScreenSnapshot = false, 0, {}
         local function rollFruitOnce()
             local gacha = RS_:WaitForChild("Modules"):WaitForChild("Net"):FindFirstChild("RF/GachaNetworkRF")
             if not gacha then return nil end
-            rolling = true
-            snap = {}
+            W.Rolling = true
+            W.RollScreenSnapshot = {}
             local pg0 = lp_:FindFirstChild("PlayerGui")
             if pg0 then
                 for _, g in ipairs(pg0:GetChildren()) do
                     if g:IsA("ScreenGui") then
-                        snap[g] = g.Enabled
-                        for _, f in ipairs(g:GetChildren()) do if f:IsA("GuiObject") then snap[f] = f.Visible end end
+                        W.RollScreenSnapshot[g] = g.Enabled
+                        for _, f in ipairs(g:GetChildren()) do if f:IsA("GuiObject") then W.RollScreenSnapshot[f] = f.Visible end end
                     end
                 end
             end
-            suppressUntil = os.clock() + (Config.Rolls.SpinWait or 16) + 12
+            W.SuppressUntil = os.clock() + (Config.Rolls.SpinWait or 0.5) + 12
             local res = gacha:InvokeServer({Context = "Purchase", BoxName = "ZiolesGacha"})
             if res ~= nil and res ~= false then State.FruitRolls = State.FruitRolls + 1 end
             return res
         end
-        S.RollFruit = function() pcall(rollFruitOnce); task.wait(Config.Rolls.SpinWait or 16); rolling = false end
+        S.RollFruit = function()
+            local ok, result = pcall(rollFruitOnce)
+            W.Rolling = false
+            task.wait(Config.Rolls.SpinWait or 0.5)
+            return ok, result
+        end
         task.spawn(function()
-            while task.wait(1) do
+            while true do
                 if Config.Rolls.Fruits and Config.Mode ~= "FruitFinder" then
                     local ok, res = pcall(rollFruitOnce)
-                    task.wait(Config.Rolls.SpinWait or 16)
-                    rolling = false
-                    if not ok or res == nil or res == false then task.wait(15) end
+                    W.Rolling = false
+                    if not ok or res == nil or res == false then
+                        task.wait(15) -- back off when the dealer/remote is unavailable
+                    else
+                        task.wait(Config.Rolls.SpinWait or 0.5)
+                    end
+                else
+                    task.wait(0.5)
                 end
             end
         end)
@@ -13052,7 +13753,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             if notif then
                 notif.DescendantAdded:Connect(function(d)
                     pcall(function()
-                        if (os.clock() < suppressUntil or os.clock() < (S.StoreQuiet or 0)) and d:IsA("TextLabel") then
+                        if (os.clock() < W.SuppressUntil or os.clock() < (S.StoreQuiet or 0)) and d:IsA("TextLabel") then
                             task.wait()
                             local t = string.lower(d.Text or "")
                             for _, w in ipairs(noticeWords) do
@@ -13069,17 +13770,18 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             end
             local lastUiSuppressScan = 0
             local lastHudRestoreScan = 0
-            game:GetService("RunService").RenderStepped:Connect(function()
+            task.spawn(function()
+                while pg.Parent do
                 local now = os.clock()
-                if now < suppressUntil and now - lastUiSuppressScan >= 0.15 then
+                if now < W.SuppressUntil and now - lastUiSuppressScan >= 0.15 then
                     lastUiSuppressScan = now
                     local extra = Config.HideUINames or {}
                     for _, g in ipairs(pg:GetChildren()) do
                         if g:IsA("ScreenGui") then
                             local force = (g.Name == "SpinnerWindow" or g.Name == "DialogueGui")
-                            if g.Enabled and (force or table.find(extra, g.Name) or (not keepScreens[g.Name] and not snap[g])) then g.Enabled = false end
+                            if g.Enabled and (force or table.find(extra, g.Name) or (not keepScreens[g.Name] and not W.RollScreenSnapshot[g])) then g.Enabled = false end
                             for _, f in ipairs(g:GetChildren()) do
-                                if f:IsA("GuiObject") and f.Visible and not snap[f] then
+                                if f:IsA("GuiObject") and f.Visible and not W.RollScreenSnapshot[f] then
                                     local n = string.lower(f.Name)
                                     local hit = table.find(extra, f.Name) ~= nil
                                     for _, w in ipairs(revealWords) do if string.find(n, w, 1, true) then hit = true break end end
@@ -13089,16 +13791,19 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                         end
                     end
                 end
-                if not rolling or now - lastHudRestoreScan < 0.15 then return end
-                lastHudRestoreScan = now
-                for _, n in ipairs(hudScreens) do
-                    local g = pg:FindFirstChild(n)
-                    if g and not g.Enabled then g.Enabled = true end
+                if W.Rolling and now - lastHudRestoreScan >= 0.15 then
+                    lastHudRestoreScan = now
+                    for _, n in ipairs(hudScreens) do
+                        local g = pg:FindFirstChild(n)
+                        if g and not g.Enabled then g.Enabled = true end
+                    end
+                    for _, path in ipairs(hudFrames) do
+                        local o = pg
+                        for _, part in ipairs(path) do o = o and o:FindFirstChild(part) end
+                        if o and o:IsA("GuiObject") and not o.Visible then o.Visible = true end
+                    end
                 end
-                for _, path in ipairs(hudFrames) do
-                    local o = pg
-                    for _, part in ipairs(path) do o = o and o:FindFirstChild(part) end
-                    if o and o:IsA("GuiObject") and not o.Visible then o.Visible = true end
+                    task.wait(0.15)
                 end
             end)
         end)
@@ -13118,13 +13823,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                             if t:IsA("Tool") and t.Name:find("Fruit") then
                                 local st = tracked[t]
                                 if not st then st = {attempts = 0, nextTry = 0, blocked = false}; tracked[t] = st end
-                                local skip = false
-                                if Config.Items.AutoRandomFruit and ScriptStorage.IgnoreStoreFruits then
-                                    for _, n in pairs(ScriptStorage.IgnoreStoreFruits) do
-                                        if n == t.Name or n == t:GetAttribute("OriginalName") then skip = true end
-                                    end
-                                end
-                                if not skip and not st.blocked and os.clock() >= st.nextTry then
+                                if not st.blocked and os.clock() >= st.nextTry then
                                     S.StoreQuiet = os.clock() + 6
                                     if st.attempts == 0 and S.inventoryHas(S.fruitKey(t)) then
                                         st.blocked = true -- already stored once: the game refuses duplicates
@@ -14248,23 +14947,31 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
 
     -- ============================================================
     -- AUTO SEA 2 & 3 (SEPARATE THREADS)
+    -- Auto Go to Next Sea is part of Auto Farm Level; the legacy stand-alone
+    -- Auto Sea toggles remain supported for users who prefer to enable them alone.
     -- ============================================================
+    local function sunriseAutoSea2Enabled()
+        return Config.AutoSea2 == true or (Config.Farm and Config.Farm.Level == true and Config.Farm.AutoNextSea == true)
+    end
+    local function sunriseAutoSea3Enabled()
+        return Config.AutoSea3 == true or (Config.Farm and Config.Farm.Level == true and Config.Farm.AutoNextSea == true)
+    end
     task.spawn(function()
         while task.wait(0.5) do
-            if Config.AutoSea2 then
+            if sunriseAutoSea2Enabled() then
                 pcall(function()
-                    if ScriptStorage.PlayerData.Level >= 700 and SeaIndex ~= 2 then
+                    if ScriptStorage.PlayerData.Level >= 700 and SeaIndex == 1 then
                         _G.SeaTransitionActive = true  -- [ADDED] synced with AutoSea3, so LevelFarm does not fight over the tween
                         local iceDoor = workspace.Map.Ice.Door
                         if iceDoor and iceDoor.CanCollide == true and iceDoor.Transparency == 0 then
                             Remotes.CommF_:InvokeServer("DressrosaQuestProgress", "Detective")
                             FunctionsHandler.LocalPlayerController.Methods.EquipTool:Call("Key")
                             TweenController.Create(CFrame.new(1347.71, 37.38, -1325.65))
-                            repeat task.wait() until not Config.AutoSea2 or (HumanoidRootPart and (HumanoidRootPart.Position - Vector3.new(1347.71, 37.38, -1325.65)).Magnitude < 5)
+                            repeat task.wait() until not sunriseAutoSea2Enabled() or (HumanoidRootPart and (HumanoidRootPart.Position - Vector3.new(1347.71, 37.38, -1325.65)).Magnitude < 5)
                         elseif iceDoor and iceDoor.CanCollide == false and iceDoor.Transparency == 1 then
                             if workspace.Enemies:FindFirstChild("Ice Admiral") then
                                 CombatController.Attack("Ice Admiral")
-                                repeat task.wait() until not Config.AutoSea2 or not workspace.Enemies:FindFirstChild("Ice Admiral") or workspace.Enemies["Ice Admiral"].Humanoid.Health <= 0
+                                repeat task.wait() until not sunriseAutoSea2Enabled() or not workspace.Enemies:FindFirstChild("Ice Admiral") or workspace.Enemies["Ice Admiral"].Humanoid.Health <= 0
                                 Remotes.CommF_:InvokeServer("TravelDressrosa")
                             else
                                 TweenController.Create(CFrame.new(1347.71, 37.38, -1325.65))
@@ -14287,16 +14994,16 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
 
     task.spawn(function()
         while task.wait(0.5) do
-            if not Config.AutoSea3 then _G.SeaTransitionActive = false end
+            if not sunriseAutoSea3Enabled() then _G.SeaTransitionActive = false end
             if SeaIndex == 3 then _G.RipIndraBegun = false end
-            if Config.AutoSea3 then
+            if sunriseAutoSea3Enabled() then
                 pcall(function()
                     -- [FIXED] Was missing "SeaIndex ~= 3" - previously this loop
                     -- ran FOREVER even after reaching Sea 3, continuing to call
                     -- BartiloQuestProgress/tween every 0.5s even though the quest was done,
                     -- which could return odd values and tween randomly. AutoSea2 above
                     -- already had this check, AutoSea3 missed it by oversight.
-                    if ScriptStorage.PlayerData.Level >= 1500 and SeaIndex ~= 3 then
+                    if ScriptStorage.PlayerData.Level >= 1500 and SeaIndex == 2 then
                         -- [ADDED] Lock LevelFarm - "drop the other half-finished
                         -- things" while handling the quest / moving to Sea 3
                         _G.SeaTransitionActive = true
@@ -14335,7 +15042,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                                     CFrame.new(-1813.52, 14.86, 1724.80)
                                 }
                                 for _, pos in ipairs(positions) do
-                                    if not Config.AutoSea3 then break end
+                                    if not sunriseAutoSea3Enabled() then break end
                                     HumanoidRootPart.CFrame = pos
                                     task.wait(0.1)
                                 end
@@ -14383,7 +15090,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                                         repeat
                                             task.wait()
                                             CombatController.Attack("rip_indra")
-                                        until not Config.AutoSea3
+                                        until not sunriseAutoSea3Enabled()
                                            or not rip_indra.Parent
                                            or rip_indra.Humanoid.Health <= 0
 
@@ -14524,13 +15231,10 @@ end
 -- subsequent initializer below, including the embedded AutoSC engine.
 task.spawn(hoangtuveu)
 --============================================================
--- [EXTRAS] NO ANIMATION + AUTO REDEEM CODES + AUTO RANDOM FRUIT (GACHA)
--- Options (you can edit/turn off):
+-- [EXTRAS] NO ANIMATION + AUTO REDEEM CODES
 Config.Extras = Config.Extras or {
-    NoAnimation      = true,   -- turns off the character animations
-    AutoRedeemCodes  = true,   -- redeems all codes at start
-    AutoGachaFruit   = true,   -- rolls the Gacha (Random Fruit) automatically
-    GachaInterval    = 5,      -- seconds between each gacha check
+    NoAnimation     = true,
+    AutoRedeemCodes = true,
 }
 --============================================================
 task.spawn(function()
@@ -14577,50 +15281,8 @@ task.spawn(function()
         end
     end)
 
-    -- AUTO RANDOM FRUIT (GACHA - Zioles)
-    getgenv().AutoRandomFruit = Config.Extras.AutoGachaFruit
-
-    local GachaRF
-    local function getGachaRF()
-        if GachaRF then return GachaRF end
-        local ok = pcall(function()
-            GachaRF = game:GetService("ReplicatedStorage").Modules.Net:WaitForChild("RF/GachaNetworkRF", 10)
-        end)
-        return ok and GachaRF or nil
-    end
-
-    local function GachaCall(ctx)
-        local rf = getGachaRF()
-        if not rf then return false, "GachaNetworkRF not found" end
-        local ok, result = pcall(function()
-            return rf:InvokeServer({
-                SpokeNPC = "Blox Fruit Gacha",
-                Context = ctx,
-                BoxName = "ZiolesGacha",
-            })
-        end)
-        if not ok then return false, tostring(result) end
-        return true, result
-    end
-
-    task.spawn(function()
-        while task.wait(Config.Extras.GachaInterval or 5) do
-            if getgenv().AutoRandomFruit and Config.Extras.AutoGachaFruit then
-                local ok, result = GachaCall("Check")
-                if ok and typeof(result) == "table" and result.RequirementsMet then
-                    local ok2, r2 = GachaCall("Purchase")
-                    print(ok2 and "[Gacha] Rolled successfully!" or ("[Gacha] Failed: " .. tostring(r2)))
-                end
-            end
-        end
-    end)
-
-    getgenv().HexHubOficial = {
-        Start = function() getgenv().AutoRandomFruit = true; Config.Extras.AutoGachaFruit = true end,
-        Stop  = function() getgenv().AutoRandomFruit = false; Config.Extras.AutoGachaFruit = false end,
-        Spin  = function() return GachaCall("Purchase") end,
-        Check = function() return GachaCall("Check") end,
-    }
+    -- Auto Random Fruit / Gacha automation was removed by request. The supported
+    -- Roll Fruits control above is the only fruit-roll worker owned by Sunrise.
 end)
 
 --============================================================
@@ -15153,9 +15815,6 @@ local Runtime = {
 
 local SETTINGS_DIR = "YELU0_Kaitun"
 local SETTINGS_FILE = SETTINGS_DIR .. "/settings_" .. tostring(localPlayer.UserId) .. ".json"
-local SELF_FILE = "YELU0_Secret_Kaitun.lua"
-local AUTO_EXEC_FILE = SETTINGS_DIR .. "/AutoKaitun.file"
-local AUTO_EXEC_SOURCE_FILE = SETTINGS_DIR .. "/script.txt"
 local autoExecSetFile
 
 local Settings = {
@@ -15168,8 +15827,6 @@ local Settings = {
     ["Select Bait"] = "Basic Bait",
     ["Anti AFK"] = true,
     ["FPS Boost"] = false,
-    ["Auto Gacha Fruit"] = false,
-    ["Auto Store Fruit"] = false,
     ["Auto Turn On Buso"] = true,
     ["Auto Turn On Observation"] = true,
     ["Auto Turn On V3"] = true,
@@ -15218,98 +15875,43 @@ SaveSettings = function(key, value)
     end
 end
 
--- Kismile/Zero dungeon-style local-source auto execution.
--- Cache the current source locally and queue only a tiny loader on teleport.
+-- Embedded Sunrise teleport reload only. Do not create a separate loader/cache file.
+-- The main Sunrise script owns the URL; AutoSC only queues a one-shot reload when needed.
 autoExecSetFile = function(state)
-    if getgenv().SunriseEmbeddedAutoSC then
-        -- Keep hops attached to Sunrise rather than launching a standalone AutoSC copy.
-        if state ~= true then
-            pcall(function()
-                if type(isfile) == "function" and type(delfile) == "function" and isfile(AUTO_EXEC_FILE) then
-                    delfile(AUTO_EXEC_FILE)
-                end
-            end)
-            return true
-        end
-        local g = getgenv()
-        local cfg = rawget(g, "Config")
-        local url = g.SunriseEmbeddedAutoExecUrl
-        if type(url) ~= "string" or url == "" then url = (cfg and cfg.AutoExec and cfg.AutoExec.Url) or g.SunriseURL end
-        if type(url) ~= "string" or url == "" then return false end
-        local q = rawget(g, "queue_on_teleport")
-            or (syn and syn.queue_on_teleport)
-            or queueonteleport
-            or (fluxus and fluxus.queue_on_teleport)
-        if type(q) ~= "function" then return false end
-        local loader = 'task.spawn(function() repeat task.wait(1) until game:IsLoaded(); task.wait(2); loadstring(game:HttpGet(' .. string.format('%q', url) .. '))() end)'
-        return pcall(q, loader)
-    end
-    local q = rawget(getgenv(), "queue_on_teleport")
+    local g = getgenv()
+    if not (g and g.SunriseEmbeddedAutoSC == true) then return false end
+    g.SunriseAutoSCReloadEnabled = state == true
+    if state ~= true then Runtime.AutoExecQueuedJob = nil; return true end
+    if Runtime.AutoExecQueuedJob == tostring(game.JobId) then return true end
+
+    local cfg = rawget(g, "Config")
+    local url = (cfg and cfg.AutoExec and cfg.AutoExec.Url)
+        or rawget(g, "SunriseEmbeddedAutoExecUrl") or rawget(g, "SunriseURL")
+    if type(url) ~= "string" or url == "" then return false end
+
+    local q = rawget(g, "queue_on_teleport")
         or (syn and syn.queue_on_teleport)
         or queueonteleport
         or (fluxus and fluxus.queue_on_teleport)
+    if type(q) ~= "function" then return false end
 
-    local supported = q ~= nil
-        and type(writefile) == "function"
-        and type(isfile) == "function"
-        and type(readfile) == "function"
-        and type(delfile) == "function"
-        and type(makefolder) == "function"
-        and type(isfolder) == "function"
-
-    if not supported then
-        return false
-    end
-
-    local ok = pcall(function()
-        if not isfolder(SETTINGS_DIR) then
-            makefolder(SETTINGS_DIR)
-        end
-
-        if state then
-            local source = rawget(getgenv(), "YELU0_KAITUN_SOURCE")
-            if type(source) ~= "string" or #source < 1000 then
-                error("current Kaitun source is unavailable")
-            end
-
-            -- Always refresh script.txt so hops use the exact version currently running.
-            writefile(AUTO_EXEC_SOURCE_FILE, source)
-            writefile(AUTO_EXEC_FILE, "true")
-
-            local loader = 'task.spawn(function()\n'
-                .. '    repeat task.wait(1) until game:IsLoaded()\n'
-                .. '    local Players = game:GetService("Players")\n'
-                .. '    local p = Players.LocalPlayer\n'
-                .. '    repeat task.wait(0.5) until p and p:FindFirstChild("PlayerGui")\n'
-                .. '    task.wait(2)\n'
-                .. '    local flag = ' .. string.format('%q', AUTO_EXEC_FILE) .. '\n'
-                .. '    local sourcePath = ' .. string.format('%q', AUTO_EXEC_SOURCE_FILE) .. '\n'
-                .. '    if isfile(flag) and readfile(flag) == "true" then\n'
-                .. '        local thisJob = tostring(game.JobId)\n'
-                .. '        if getgenv().YELU0_KAITUN_AUTOEXEC_JOB == thisJob then return end\n'
-                .. '        getgenv().YELU0_KAITUN_AUTOEXEC_JOB = thisJob\n'
-                .. '        if isfile(sourcePath) then\n'
-                .. '            local src = readfile(sourcePath)\n'
-                .. '            getgenv().YELU0_KAITUN_SOURCE = src\n'
-                .. '            local fn, err = loadstring(src)\n'
-                .. '            if fn then fn() else warn("[YELU0 KAITUN AutoExec] " .. tostring(err)) end\n'
-                .. '        else\n'
-                .. '            warn("[YELU0 KAITUN AutoExec] source cache missing: " .. sourcePath)\n'
-                .. '        end\n'
-                .. '    end\n'
-                .. 'end)'
-
-            if Runtime.AutoExecQueuedJob ~= tostring(game.JobId) then
-                q(loader)
-                Runtime.AutoExecQueuedJob = tostring(game.JobId)
-            end
-        else
-            if isfile(AUTO_EXEC_FILE) then
-                delfile(AUTO_EXEC_FILE)
-            end
-        end
-    end)
-
+    local loader = 'task.spawn(function()\n'
+        .. '    repeat task.wait(0.5) until game:IsLoaded()\n'
+        .. '    local g = (type(getgenv) == "function" and getgenv()) or _G\n'
+        .. '    if not g or g.SunriseAutoSCReloadEnabled ~= true then return end\n'
+        .. '    task.wait(2)\n'
+        .. '    if g.SunriseMainJobId == tostring(game.JobId) then return end\n'
+        .. '    g.SunriseURL = ' .. string.format('%q', url) .. '\n'
+        .. '    local ok, err = pcall(function()\n'
+        .. '        local src = game:HttpGet(' .. string.format('%q', url) .. ')\n'
+        .. '        local fn, compileErr = loadstring(src)\n'
+        .. '        if not fn then error(compileErr or "loadstring failed") end\n'
+        .. '        fn()\n'
+        .. '    end)\n'
+        .. '    if not ok then warn("[Sunrise AutoSC reload] " .. tostring(err)) end\n'
+        .. 'end)'
+    local ok = pcall(q, loader)
+    if ok then Runtime.AutoExecQueuedJob = tostring(game.JobId) end
     return ok
 end
 
@@ -16184,36 +16786,6 @@ local function applyFPSBoost(on)
 end
 
 -- fruit helpers ----------------------------------------------------------------
-local GachaClient
-pcall(function() GachaClient = require(ReplicatedStorage.Controllers.GachaClient) end)
-local GachaNext = 0
-local function rollFruitGacha()
-    if not GachaClient or workspace:GetServerTimeNow() < GachaNext then return end
-    GachaNext = workspace:GetServerTimeNow() + 30
-    local ok, info = pcall(GachaClient.CheckGachaAsync, "ZiolesGacha", "Blox Fruit Gacha")
-    if not ok or type(info)~="table" then return end
-    for _,k in ipairs({"PaidRandomItemsRestricted","Level","Price","Cooldown"}) do
-        local req=info[k]
-        if req and ((req.RequirementMet==false) or (req.Value==true and k=="PaidRandomItemsRestricted")) then
-            if req.TimeEnds then GachaNext=req.TimeEnds+1 end
-            return
-        end
-    end
-    pcall(GachaClient.PurchaseGachaAsync, "ZiolesGacha")
-    GachaNext = workspace:GetServerTimeNow() + 5
-end
-local function storeFruits(container)
-    if not container then return end
-    for _,tool in ipairs(container:GetChildren()) do
-        if tool:IsA("Tool") and string.find(tool.Name,"Fruit") and not tool:FindFirstChild("YELU0_StoredTry") then
-            local base=string.gsub(tool.Name," Fruit","")
-            local original=tool:GetAttribute("OriginalName") or (base.."-"..base)
-            pcall(function() CommF:InvokeServer("StoreFruit", original, tool) end)
-            local marker=Instance.new("BoolValue"); marker.Name="YELU0_StoredTry"; marker.Parent=tool
-            task.wait(0.4)
-        end
-    end
-end
 
 -- =========================================================================
 -- Mature Secret subsystem extracted from the prior tested implementation
@@ -22276,38 +22848,93 @@ local function NormalizeSecretProgressName(value)
     return tostring(value or ""):lower():gsub("[^%w]", "")
 end
 
+local function SunriseAutoSCProgressSea()
+    local id = game.PlaceId
+    if id == 2753915549 or id == 85211729168715 then return 1 end
+    if id == 4442272183 or id == 79091703265657 then return 2 end
+    if id == 7449423635 or id == 7449925015 or id == 100117331123089 then return 3 end
+    return 0
+end
+
 GetHiddenProgress = function(force)
-    -- Read progress from the same game endpoint as the original AutoSC and keep
-    -- confirmed completions if the next response is partial or temporarily stale.
-    local refresh = force == true or (os.clock() - (HiddenEvent.checked or 0) > 5)
+    -- Scan on join. In Sea 1, later scans are driven by explicit invalidation after
+    -- quest progress; Sea 2/3 reuse the initial snapshot. Failed reads retry slowly.
+    local now = os.clock()
+    local sea = SunriseAutoSCProgressSea()
+    HiddenEvent.progressScanBySea = HiddenEvent.progressScanBySea or {}
+    local scanned = HiddenEvent.progressScanBySea[sea] == true
+    local minRetry = (HiddenEvent.progressLastAttempt and now - HiddenEvent.progressLastAttempt < 2.5) or false
+    local refresh = false
+    if not scanned then
+        refresh = not minRetry and (not HiddenEvent.progressLastAttempt or now - HiddenEvent.progressLastAttempt >= 12)
+    elseif sea == 1 and (force == true or (tonumber(HiddenEvent.checked) or 0) <= 0) then
+        refresh = not minRetry
+    elseif (HiddenEvent.progressLastError or "") ~= "" and now - (HiddenEvent.progressLastAttempt or 0) >= 15 then
+        refresh = true
+    end
     if refresh then
-        HiddenEvent.checked = os.clock()
+        HiddenEvent.checked = now
+        HiddenEvent.progressLastAttempt = now
         local ok, result = pcall(function()
             return ReplicatedStorage.Modules.Net["RF/RequestBonusMomentReplication"]:InvokeServer({Type="GetMomentProgress"})
         end)
         if ok and type(result) == "table" and type(result.Data) == "table" then
             local previous = type(HiddenEvent.progress) == "table" and HiddenEvent.progress or {}
             local normalized = {}
+            local newlyCompleted = false
             for k, value in pairs(result.Data) do
-                normalized[k] = IsSecretProgressComplete(value) or IsSecretProgressComplete(previous[k])
+                local done = IsSecretProgressComplete(value) or IsSecretProgressComplete(previous[k])
+                normalized[k] = done
+                if done and not IsSecretProgressComplete(previous[k]) and tostring(k):sub(1, 5) == "Sea1/" then newlyCompleted = true end
             end
             -- Preserve true entries even when the server omits them from a later snapshot.
             for k, value in pairs(previous) do
                 if IsSecretProgressComplete(value) then normalized[k] = true end
             end
             HiddenEvent.progress = normalized
+            HiddenEvent.progressVersion = (HiddenEvent.progressVersion or 0) + 1
+            HiddenEvent.progressScanBySea[sea] = true
+            HiddenEvent.progressScannedSea = sea
             HiddenEvent.progressLastError = nil
-            HiddenEvent.progressLastSuccess = os.clock()
+            HiddenEvent.progressLastSuccess = now
+            if newlyCompleted then
+                local env = type(getgenv) == "function" and getgenv() or _G
+                local callback = env and env.SunriseOnSecretProgressChanged
+                if type(callback) == "function" then task.defer(callback) end
+            end
         else
             HiddenEvent.progressLastError = ok and "The server returned no progress data" or tostring(result)
         end
+    elseif HiddenEvent.progressLastError and not scanned and now - (HiddenEvent.progressLastAttempt or 0) >= 15 then
+        HiddenEvent.checked = 0
     end
     return HiddenEvent.progress or {}
 end
 
+local cachedSecretProgressTable = nil
+local cachedSecretProgressVersion = -1
+local cachedSecretProgressDone = 0
 local function CountSecretDone(progress)
-    -- Count only the 39 known First Sea tasks, not unrelated entries in the response.
+    -- A version counter protects against in-place mutations as well as replaced tables.
     progress = type(progress) == "table" and progress or {}
+    local version = tonumber(HiddenEvent.progressVersion) or 0
+    if progress == cachedSecretProgressTable and version == cachedSecretProgressVersion then
+        return cachedSecretProgressDone
+    end
+
+    -- Index completed quest names once. The old code rescanned every progress key
+    -- for each of the 39 quests on every scheduler tick (often several times/sec).
+    local completedNames = {}
+    for progressKey, value in pairs(progress) do
+        if IsSecretProgressComplete(value) then
+            local keyText = tostring(progressKey)
+            if keyText:sub(1, 5) == "Sea1/" then
+                local leaf = keyText:match("([^/]+)$") or keyText
+                completedNames[NormalizeSecretProgressName(leaf)] = true
+            end
+        end
+    end
+
     local n, seen = 0, {}
     for _, quest in ipairs(HiddenQuests or {}) do
         if type(quest) == "table" and type(quest.Name) == "string" and quest.Name ~= "" then
@@ -22315,24 +22942,17 @@ local function CountSecretDone(progress)
             if not seen[normalizedName] then
                 seen[normalizedName] = true
                 local key = "Sea1/" .. tostring(quest.Island or "") .. "/" .. quest.Name
-                local completed = IsSecretProgressComplete(progress[key])
-                if not completed then
-                    for progressKey, value in pairs(progress) do
-                        local keyText = tostring(progressKey)
-                        if keyText:sub(1, 5) == "Sea1/" then
-                            local leaf = keyText:match("([^/]+)$") or keyText
-                            if NormalizeSecretProgressName(leaf) == normalizedName and IsSecretProgressComplete(value) then
-                                completed = true
-                                break
-                            end
-                        end
-                    end
+                if IsSecretProgressComplete(progress[key]) or completedNames[normalizedName] then
+                    n += 1
                 end
-                if completed then n += 1 end
             end
         end
     end
-    return math.min(n, 39)
+
+    cachedSecretProgressTable = progress
+    cachedSecretProgressVersion = version
+    cachedSecretProgressDone = math.min(n, 39)
+    return cachedSecretProgressDone
 end
 
 -- reload this standalone file after a hop when executor workspace contains it
@@ -23090,6 +23710,11 @@ if getgenv().SunriseEmbeddedAutoSC then
             local ok, progress = pcall(function() return GetHiddenProgress(force == true) end)
             return (ok and type(progress) == "table") and progress or {}
         end,
+        InvalidateProgress = function()
+            -- Called after a confirmed secret completion, never by routine UI polling.
+            if SunriseAutoSCProgressSea() == 1 then HiddenEvent.checked = 0 end
+            return true
+        end,
         SetProgressSnapshot = function(snapshot)
             if type(snapshot) ~= "table" then return false end
             local merged = {}
@@ -23102,6 +23727,7 @@ if getgenv().SunriseEmbeddedAutoSC then
                 if IsSecretProgressComplete(value) then merged[key] = true end
             end
             HiddenEvent.progress = merged
+            HiddenEvent.progressVersion = (HiddenEvent.progressVersion or 0) + 1
             HiddenEvent.checked = os.clock()
             HiddenEvent.progressLastError = nil
             HiddenEvent.progressLastSuccess = os.clock()
@@ -23271,13 +23897,6 @@ local PortalBtn=makeRow("Portal C travel", Settings["Use Portal Fruit Teleport"]
 end)
 local AntiBtn=makeRow("Anti AFK", Settings["Anti AFK"] and "ON" or "OFF", function(b) local v=not Settings["Anti AFK"]; SaveSettings("Anti AFK",v); b.Text=v and "ON" or "OFF" end)
 local FPSBtn=makeRow("FPS Boost", Settings["FPS Boost"] and "ON" or "OFF", function(b) local v=not Settings["FPS Boost"]; SaveSettings("FPS Boost",v); applyFPSBoost(v); b.Text=v and "ON" or "OFF" end)
-local OtherBtn=makeRow("Fruit Gacha / Store", (Settings["Auto Gacha Fruit"] and "G" or "-").." / "..(Settings["Auto Store Fruit"] and "S" or "-"), function(b)
-    -- cycle: off -> store -> gacha+store -> off
-    if not Settings["Auto Store Fruit"] and not Settings["Auto Gacha Fruit"] then SaveSettings("Auto Store Fruit",true)
-    elseif Settings["Auto Store Fruit"] and not Settings["Auto Gacha Fruit"] then SaveSettings("Auto Gacha Fruit",true)
-    else SaveSettings("Auto Store Fruit",false); SaveSettings("Auto Gacha Fruit",false) end
-    b.Text=(Settings["Auto Gacha Fruit"] and "G" or "-").." / "..(Settings["Auto Store Fruit"] and "S" or "-")
-end)
 
 -- compact status strip: no floating ball
 local Strip=Instance.new("Frame"); Strip.Name="StatusStrip"; Strip.AnchorPoint=Vector2.new(0.5,1); Strip.Position=UDim2.new(0.5,0,1,-22); Strip.Size=UDim2.new(0,900,0,92); Strip.BackgroundColor3=BG; Strip.BackgroundTransparency=0.10; Strip.BorderSizePixel=0; Strip.Parent=Gui; corner(Strip,9); stroke(Strip)
@@ -23301,13 +23920,6 @@ task.spawn(function()
             if Settings["Auto Turn On V3"] then pcall(TurnOnV3) end
             if Settings["Auto Turn On V4"] then pcall(TurnOnV4) end
         end
-    end
-end)
-
-task.spawn(function()
-    while task.wait(3) do
-        if Settings["Auto Gacha Fruit"] then pcall(rollFruitGacha) end
-        if Settings["Auto Store Fruit"] then pcall(storeFruits,localPlayer.Backpack); pcall(storeFruits,localPlayer.Character) end
     end
 end)
 
@@ -23342,8 +23954,10 @@ task.spawn(function()
 end)
 
 -- UI/status updater ------------------------------------------------------------
+-- Status text does not need to repaint three times per second; the task scheduler
+-- remains responsive separately, while the expensive progress count is snapshot-cached.
 task.spawn(function()
-    while task.wait(0.35) do
+    while task.wait(1.25) do
         local p=totalProgress()
         local quest=HiddenEvent.current or (p>=39 and "The Finale" or "None")
         local step=Runtime.Step~="Idle" and Runtime.Step or (HiddenEvent.step or "Idle")
@@ -23459,54 +24073,13 @@ end
 
 
 
--- Keep Sunrise's saved checklist synchronized with the embedded AutoSC progress map.
--- This reads AutoSC's five-second cached snapshot; it does not fire a separate remote
--- request for each row. Only a positive live completion can mark a quest done.
+-- Sync all completed rows from one cached progress snapshot. The helper indexes
+-- progress once and batches settings writes; it no longer asks the bridge once per quest.
 task.spawn(function()
-    while task.wait(5) do
-        pcall(function()
-            local env = type(getgenv) == "function" and getgenv() or _G
-            local bridge = env and env.SunriseAutoSCBridge
-            local progress = SunriseReadSecretProgress(false)
-            if type(progress) ~= "table" then return end
-            for _, quest in ipairs(SUNRISE_SECRET_QUESTS or {}) do
-                if quest.name == "The Finale" then
-                    if bridge and type(bridge.IsDone) == "function" then
-                        local finalOk, finalDone = pcall(bridge.IsDone, quest.name)
-                        if finalOk and finalDone == true
-                            and not (Config.SecretQuest and Config.SecretQuest.Completed and Config.SecretQuest.Completed[quest.name] == true) then
-                            pcall(SUNRISE_SecretQuestMarkDone, quest.name)
-                        end
-                    end
-                else
-                    local done = false
-                    if bridge and type(bridge.IsDone) == "function" then
-                        local doneOk, actualDone = pcall(bridge.IsDone, quest.name)
-                        done = doneOk and actualDone == true
-                    end
-                    if not done then
-                        local target = tostring(quest.name or ""):lower():gsub("[^%w]", "")
-                        local aliases = SUNRISE_SECRET_QUEST_ALIASES or {}
-                        for progressKey, value in pairs(progress) do
-                            local keyText = tostring(progressKey)
-                            if keyText:sub(1, 5) == "Sea1/" then
-                                local leaf = keyText:match("([^/]+)$") or keyText
-                                local canonical = SunriseCanonicalSecretProgressName(leaf)
-                                local normalizedLeaf = leaf:lower():gsub("[^%w]", "")
-                                local normalizedCanonical = tostring(canonical):lower():gsub("[^%w]", "")
-                                local completed = value == true or (type(value) == "table" and value.Completed == true)
-                                if completed and (normalizedLeaf == target or normalizedCanonical == target) then
-                                    done = true
-                                    break
-                                end
-                            end
-                        end
-                    end
-                    if done and not (Config.SecretQuest and Config.SecretQuest.Completed and Config.SecretQuest.Completed[quest.name] == true) then
-                        pcall(SUNRISE_SecretQuestMarkDone, quest.name)
-                    end
-                end
-            end
-        end)
+    -- The first snapshot is requested on join; later refreshes are event-driven in
+    -- Sea 1 and session-cached in Seas 2/3 after a successful read.
+    pcall(SunriseSyncSecretProgressCompletions)
+    while task.wait(10) do
+        pcall(SunriseSyncSecretProgressCompletions)
     end
 end)
