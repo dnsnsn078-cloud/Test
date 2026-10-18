@@ -13213,9 +13213,98 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             end
             return nil
         end
+        -- Track a raid session across short UI/replication gaps. The timer alone is
+        -- not reliable enough: it can be late to appear or briefly disappear during
+        -- transitions, which previously let Start() walk back to the summon button.
+        -- A successful summon press enters "starting" immediately; that latch cannot
+        -- be cleared until the raid is observed or a bounded start timeout expires.
         local function raidActive()
-            local ok, v = pcall(function() return lp_.PlayerGui.Main.TopHUDList.RaidTimer.Visible end)
-            return ok and v == true
+            local now = os.clock()
+            local timerVisible = false
+            pcall(function()
+                local playerGui = lp_:FindFirstChild("PlayerGui")
+                local main = playerGui and playerGui:FindFirstChild("Main")
+                local top = main and main:FindFirstChild("TopHUDList")
+                -- Different client revisions expose the raid timer through either
+                -- Main.TopHUDList.RaidTimer or Main.Timer. Read both independently:
+                -- one object can exist but be hidden while the other is active.
+                local modernTimer = top and top:FindFirstChild("RaidTimer")
+                local legacyTimer = main and main:FindFirstChild("Timer")
+                timerVisible = (modernTimer ~= nil and modernTimer.Visible == true)
+                    or (legacyTimer ~= nil and legacyTimer.Visible == true)
+            end)
+
+            -- Raid island markers are a second source of truth. Use the exact numbered
+            -- markers consumed by fightRaid(), rather than assuming the timer is enough.
+            local islandMarkerVisible = false
+            pcall(function()
+                local origin = workspace:FindFirstChild("_WorldOrigin")
+                local locations = origin and origin:FindFirstChild("Locations")
+                if locations then
+                    for i = 1, 5 do
+                        local marker = locations:FindFirstChild("Island " .. i)
+                        if marker and marker.Parent then
+                            islandMarkerVisible = true
+                            break
+                        end
+                    end
+                end
+            end)
+
+            local phase = State.RaidPhase or "idle"
+            local latestRaidAlert = math.max(tonumber(LastRaidAlert) or 0, tonumber(LastRaidAlert2) or 0)
+            local alertFresh = latestRaidAlert > 0 and (os.time() - latestRaidAlert <= 12)
+            local alertConfirmsThisSession = alertFresh and (phase == "starting" or phase == "active" or phase == "finishing")
+
+            if timerVisible or islandMarkerVisible or alertConfirmsThisSession then
+                State.RaidPhase = "active"
+                State.RaidHasStarted = true
+                State.RaidLastSignalAt = now
+                State.Raid = true
+                return true
+            end
+
+            if phase == "starting" then
+                -- Do not try to summon again while the server is still deciding whether
+                -- the first press started the raid. Expire this state only after timeout.
+                local pressedAt = tonumber(State.RaidStartPressedAt) or now
+                if now - pressedAt <= 45 then
+                    State.Raid = true
+                    return true
+                end
+                State.RaidPhase = "idle"
+                State.RaidHasStarted = false
+                State.Raid = false
+                State.RaidStartPressedAt = 0
+                State.RaidStartPressedWall = 0
+                State.RaidRetryAfter = now + 10
+                SetTask("MainTask", "Raid | No start confirmation; waiting before retrying")
+                return false
+            end
+
+            if phase == "active" or phase == "finishing" then
+                -- Consider the raid finished only after all three signals (timer,
+                -- numbered islands, recent start notification) stay absent for 20s.
+                -- This prevents a brief HUD gap or wave transition from re-queuing.
+                local lastSignalAt = tonumber(State.RaidLastSignalAt) or now
+                if now - lastSignalAt < 20 then
+                    State.RaidPhase = "finishing"
+                    State.Raid = true
+                    return true
+                end
+                State.RaidPhase = "idle"
+                State.RaidHasStarted = false
+                State.Raid = false
+                State.RaidStartPressedAt = 0
+                State.RaidStartPressedWall = 0
+                State.RaidLastSignalAt = 0
+                State.RaidFinishedAt = now
+                State.RaidRetryAfter = now + 4
+                return false
+            end
+
+            State.Raid = false
+            return false
         end
         local function press(obj)
             if not obj then return false end
@@ -13455,6 +13544,11 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         end
         local function startRaid()
             if raidActive() then return end
+            local retryAfter = tonumber(State.RaidRetryAfter) or 0
+            if os.clock() < retryAfter then
+                SetTask("MainTask", "Raid | Waiting before the next start attempt")
+                return
+            end
             local btn = summonButton()
             if not btn then SetTask('MainTask', 'Raid | Summon button not found') return end
             State.Mode = "Raid"
@@ -13467,15 +13561,30 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                 SetTask('MainTask', 'Raid | Moving to summon button')
                 return
             end
-            -- Avoid firing the detector repeatedly while the raid timer is replicating.
+            -- Rate-limit the physical press AND latch the session before the next
+            -- dispatcher tick. Even if the timer is delayed, the same raid cannot
+            -- send us back to the summon point while this state is "starting".
             if os.clock() - lastRaidSummonPress < 4 then
                 SetTask('MainTask', 'Raid | Waiting for raid to start')
                 return
             end
             lastRaidSummonPress = os.clock()
+            LastRaidAlert, LastRaidAlert2 = 0, 0
+            State.RaidPhase = "starting"
+            State.RaidHasStarted = false
+            State.RaidStartPressedAt = os.clock()
+            State.RaidStartPressedWall = os.time()
+            State.RaidLastSignalAt = State.RaidStartPressedAt
+            State.Raid = true
             if press(btn) then
-                SetTask('MainTask', 'Raid | Summon pressed; waiting for raid timer')
+                SetTask('MainTask', 'Raid | Summon pressed; waiting for confirmation')
             else
+                State.RaidPhase = "idle"
+                State.RaidHasStarted = false
+                State.RaidStartPressedAt = 0
+                State.RaidStartPressedWall = 0
+                State.Raid = false
+                State.RaidRetryAfter = os.clock() + 5
                 SetTask('MainTask', 'Raid | Could not activate summon button')
             end
             task.wait(0.5)
